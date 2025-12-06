@@ -71,9 +71,6 @@ class Agent(Node):
             vel_theta -= self._config.get("min_walk_vel_thetea", 0.3)
         self._action.cmd_vel(vel_x, vel_y, vel_theta)
 
-    def look_at(self, args) -> None:
-        """Set robot's head and neck to look at specified position."""
-        self._vision.look_at(args)
 
     def move_head(self, pitch: float, yaw: float) -> None:
         """Set robot's head and neck angles."""
@@ -88,13 +85,9 @@ class Agent(Node):
         """Execute the kicking action."""
         self._action.do_kick(foot, death)
 
-    def save_ball(self, direction):
-        if direction not in [1, 2]:
-            self.logger.error("[Core] Save ball direction must be 1 or 2, actually: {}".format(direction))
-            return False
-
-        for _ in range(1):
-            self._action.save_ball(direction)
+    def save_ball(self, direction=1):
+        """Execute the saving action."""
+        self._action.save_ball(direction)
 
     # normalize(-pi,pi)
     def angle_normalize(self, angle: float) -> float:
@@ -108,15 +101,6 @@ class Agent(Node):
             angle += 2 * math.pi
         self.get_logger().debug(f"Normalized angle: {angle}")
         return angle
-
-    # Data retrieval methods
-    def get_robots_data(self) -> Dict:
-        """Return data about all robots."""
-        return self._robots_data
-
-    def get_command(self) -> Dict:
-        """Return current command."""
-        return self._command
 
     def get_self_pos(self) -> np.ndarray:
         """Return self position in map coordinates."""
