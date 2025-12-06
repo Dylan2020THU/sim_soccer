@@ -1,0 +1,12 @@
+# velocities
+walk_vel_x: 0.5
+walk_vel_y: 0.5
+walk_vel_theta: 1
+max_walk_vel_x: 1.0
+max_walk_vel_y: 1.0
+max_walk_vel_theta: 1
+
+
+#
+# TODO: You may want to add your own config here 
+# 
