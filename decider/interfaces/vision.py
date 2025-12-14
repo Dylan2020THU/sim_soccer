@@ -266,7 +266,7 @@ class Vision(Node):
         """
         return list(self._ball_history)
 
-    def relocal(self, x=0, y=0, theta=0):
+    def relocate(self, x=0, y=0, theta=0):
         """
         重新定位，重置视觉数据
         """
