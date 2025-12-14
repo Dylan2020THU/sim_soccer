@@ -102,6 +102,11 @@ class Agent(Node):
         self.get_logger().debug(f"Normalized angle: {angle}")
         return angle
 
+    # Data retrieval methods
+    def relocate(self, x: float = 0, y : float = 0, theta : float = 0):
+        """reset current location as reference point"""
+        return self._vision.relocate(x, y, theta)
+
     def get_self_pos(self) -> np.ndarray:
         """Return self position in map coordinates."""
         return self._vision.self_pos

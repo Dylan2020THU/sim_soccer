@@ -59,19 +59,23 @@ The `Agent` class provides a comprehensive set of methods categorized into Actua
 
 #### Self-Localization & Configuration
 
-1.  **`get_self_pos(self) -> np.ndarray`**  
+1.  **`relocate(self, x: float = 0, y: float = 0, theta: float = 0) -> np.ndarray`**  
+    Sending the relocate command, marking current position as the reference point in location. 
+    - **x, y, theta**: The coordinate you want current location to be. Typically put the robot to middle and set it to (0, 0, 0). 
+
+2.  **`get_self_pos(self) -> np.ndarray`**  
     Returns the robot's current position (x, y) in the global map coordinates.
     
     - **Return Type:** `np.ndarray` (`[x, y]`)
-2.  **`get_self_yaw(self) -> float`**  
+3.  **`get_self_yaw(self) -> float`**  
     Returns the robot's current orientation (yaw) angle (rad) in map coordinates.
     
     - **Return Type:** `float`
-3.  **`angle_normalize(self, angle: float) -> float`**  
+4.  **`angle_normalize(self, angle: float) -> float`**  
     A utility function that normalizes any given angle (in radians) into the standard range of $(-\pi, \pi)$. Returns `None` if the input is `None`.
     
     - **Return Type:** `Optional[float]`
-4.  **`get_config(self) -> Dict`**  
+5.  **`get_config(self) -> Dict`**  
     Returns the agent's full configuration dictionary, typically loaded from a YAML or JSON file.
     
     - **Return Type:** `Dict`

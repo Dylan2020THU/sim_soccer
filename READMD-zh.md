@@ -19,6 +19,7 @@
 
 ### 执行 (Actuations)
 
+
 1.  **`cmd_vel(self, vel_x: float, vel_y: float, vel_theta: float) -> None`**
     设置机器人的目标**相对**速度。这些值会根据配置限制（例如 `max_walk_vel_x`）进行缩放和保护。
 
@@ -60,22 +61,26 @@
 
 #### 自身定位与配置
 
-1.  **`get_self_pos(self) -> np.ndarray`**
+1.  **`relocate(self, x: float = 0, y: float = 0, theta: float = 0) -> np.ndarray`**  
+    发送重新定位指令。将当前定位点标记为 (x, y, theta)
+    - **x, y, theta**: 希望当前位置被定位为(x, y, theta)。其余坐标均为相对当前位置。
+
+2.  **`get_self_pos(self) -> np.ndarray`**
     返回机器人在全局地图坐标中的当前位置 (x, y)。
 
     * **返回类型:** `np.ndarray` (`[x, y]`)
 
-2.  **`get_self_yaw(self) -> float`**
+3.  **`get_self_yaw(self) -> float`**
     返回机器人在地图坐标中的当前朝向（偏航角，弧度）。
 
     * **返回类型:** `float`
 
-3.  **`angle_normalize(self, angle: float) -> float`**
+4.  **`angle_normalize(self, angle: float) -> float`**
     一个工具函数，用于将任意给定角度（弧度）归一化到标准范围 $(-\pi, \pi)$ 内。如果输入为 `None` 则返回 `None`。
 
     * **返回类型:** `Optional[float]`
 
-4.  **`get_config(self) -> Dict`**
+5.  **`get_config(self) -> Dict`**
     返回 Agent 的完整配置字典，通常从 YAML 或 JSON 文件加载。
 
     * **返回类型:** `Dict`
