@@ -79,6 +79,7 @@ class Vision(Node):
         self.ball_distance = 6000
         self._search_ball_phase = 0
         self._ball_history = deque(maxlen=20)
+        self._detected_objects = list()
  
         # Configure QoS profile for subscriptions
         qos_profile = QoSProfile(
