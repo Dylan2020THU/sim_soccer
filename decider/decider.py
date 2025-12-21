@@ -3,7 +3,7 @@
 #   @description : The entry py file for decision-making on clients
 #
 
-import sys, os, math, signal, time
+import sys, os, math, signal, time, traceback
 import numpy as np
 from pathlib    import Path
 from datetime   import datetime
@@ -50,7 +50,12 @@ class Agent(Node):
         try:
             user_entry.loop(self)
         except Exception as e:
-            self.logger.error(f"Error in timer callback: {e}")
+            self.logger.error(f"[Core] Error in timer callback: {e}")
+            self.logger.error(f"[Core] Core exited !")
+            self.stop()
+            self.logger.error(f"[Core] The trackback infomation is shown below:")
+            trace.print_exc()
+            exit(-1)
 
     def cmd_vel(self, vel_x: float, vel_y: float, vel_theta: float) -> None:
         """Set robot velocity with scaling from configuration."""
