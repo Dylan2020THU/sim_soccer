@@ -85,36 +85,53 @@ The `Agent` class provides a comprehensive set of methods categorized into Actua
 1.  **`get_if_ball(self) -> bool`**  
     Returns `True` if the vision system currently detects the ball, `False` otherwise.
     
-    - **Return Type:** `bool`
-2.  **`get_ball_pos(self) -> List[Optional[float]]`**  
+2.  **`get_objects(self) -> list`**  
+    Return a list of all objects detected in the vision.
+    Each object is defined as:
+    ```python3
+            object_info = {
+                'label': label,
+                'relative_pos': relative_pos,
+                'absolute_pos': absolute_coord,
+                'distance': distance,
+                'confidence': obj.confidence,
+                'bounding_box_center': curr_coord / 1000,
+                'bound_left_low': np.array(obj.bound_left_low[:2]) if obj.bound_left_low else None,
+                'bound_right_low': np.array(obj.bound_right_low[:2]) if obj.bound_right_low else None,
+                'timestamp': time.time()
+            }
+    ```
+    - **Return Type:** `list`
+
+3.  **`get_ball_pos(self) -> List[Optional[float]]`**  
     Returns the ball's position relative to the robot's current location (`[x, y]` in meters), or `[None, None]` if the ball is not detected.
     
     - **Return Type:** `List[Optional[float]]` (`[x, y]`)
-3.  **`get_ball_distance(self) -> float`**  
+4.  **`get_ball_distance(self) -> float`**  
     Returns the distance (in meters) to the ball. Returns a large value (`1e6`) if the ball is not currently detected.
     
     - **Return Type:** `float`
-4.  **`get_ball_angle(self) -> Optional[float]`**  
+5.  **`get_ball_angle(self) -> Optional[float]`**  
     Calculates and returns the angle (in radians) to the ball, relative to the robot's forward direction. Returns `None` if the ball is not detected.
     
     - **Return Type:** `Optional[float]`
-5.  **`get_ball_pos_in_map(self) -> np.ndarray`**  
+6.  **`get_ball_pos_in_map(self) -> np.ndarray`**  
     Returns the ball's position (x, y) in the global map coordinates. Returns `None` if the ball is not detected.
     
     - **Return Type:** `np.ndarray` (`[x, y]`)
-6.  **`get_if_close_to_ball(self) -> bool`**  
+7.  **`get_if_close_to_ball(self) -> bool`**  
     Returns `True` if the distance to the ball is less than the configured `close_to_ball_threshold`.
     
     - **Return Type:** `bool`
-7.  **`get_ball_history(self)`**  
+8.  **`get_ball_history(self)`**  
     Returns the recent history of the ball's detected positions and associated metadata. The exact return type is defined by the underlying vision interface.
     
     - **Return Type:** `Any`
-8.  **`get_neck(self) -> float`**  
+9.  **`get_neck(self) -> float`**  
     Returns the current angle (rad) of the robot's neck joint.
     
     - **Return Type:** `float`
-9.  **`get_head(self) -> float`**  
+10.  **`get_head(self) -> float`**  
     Returns the current angle (rad) of the robot's head joint.
     
     - **Return Type:** `float`

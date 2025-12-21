@@ -106,6 +106,21 @@ class Agent(Node):
     def relocate(self, x: float = 0, y : float = 0, theta : float = 0):
         """reset current location as reference point"""
         return self._vision.relocate(x, y, theta)
+    
+    def get_objects(self) -> list:
+        # A list of dict:
+        #    {
+        #        'label': label,
+        #        'relative_pos': relative_pos,
+        #        'absolute_pos': absolute_coord,
+        #        'distance': distance,
+        #        'confidence': obj.confidence,
+        #        'bounding_box_center': curr_coord / 1000,
+        #        'bound_left_low': np.array(obj.bound_left_low[:2]) if obj.bound_left_low else None,
+        #        'bound_right_low': np.array(obj.bound_right_low[:2]) if obj.bound_right_low else None,
+        #        'timestamp': time.time()
+        #    }
+        return self._vision.get_objects()
 
     def get_self_pos(self) -> np.ndarray:
         """Return self position in map coordinates."""
