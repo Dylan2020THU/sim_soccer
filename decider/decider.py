@@ -54,7 +54,7 @@ class Agent(Node):
             self.logger.error(f"[Core] Core exited !")
             self.stop()
             self.logger.error(f"[Core] The trackback infomation is shown below:")
-            trace.print_exc()
+            traceback.print_exc()
             exit(-1)
 
     def cmd_vel(self, vel_x: float, vel_y: float, vel_theta: float) -> None:
@@ -217,9 +217,9 @@ if __name__ == "__main__":
                 agent.stop()
                 agent.destroy_node()
                 rclpy.shutdown()
-                sys.exit(0)
             except Exception as e:
-                agent.get_logger().error(f"[Core] Error during stop command in signal handler: {e}")
+                print(f"======== [Core] Error during stop command in signal handler: {e} ========")
+            sys.exit(0)
 
 
     signal.signal(signal.SIGINT, signal_handler) 
