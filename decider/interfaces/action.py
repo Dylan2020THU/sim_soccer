@@ -31,20 +31,38 @@ class Action:
     #   _feedback_cb()
     #   _action_cb()        Do nothing
 
+
     def __init__(self, agent):
         self.agent = agent
-        self.logger = agent.get_logger().get_child("action_node")
+        # Check for Sim Mode
+        self.is_simulation = getattr(agent, "is_simulation", False)
         
-        self.logger.info("[Core] Initializing the action module")
+        if self.is_simulation:
+            # Sim Mode: Logging to standard logger
+            self.logger = agent.get_logger()
+            self.logger.info("[Core/Action] Initializing Action in Sim Mode (No ROS)")
+            # No publishers created
+            self._cmd_vel_pub = None
+            self._head_pose_pub = None
+            self._kick_pub = None
+            self._save_pub = None
+        else:
+            # ROS Mode
+            self.logger = agent.get_logger().get_child("action_node")
+            self.logger.info("[Core] Initializing the action module")
 
-        self._cmd_vel_pub = self.agent.create_publisher(Twist, "/THMOS/walk/move", 1)
-        self._head_pose_pub = self.agent.create_publisher(
-            JointState, "/THMOS/head_control/manual_command", 1
-        )
-        self._kick_pub = self.agent.create_publisher(Int32, "/THMOS/motion/kick", 1)
-        self._save_pub = self.agent.create_publisher(Int32, "/THMOS/motion/save", 1)
+            self._cmd_vel_pub = self.agent.create_publisher(Twist, "/THMOS/walk/move", 1)
+            self._head_pose_pub = self.agent.create_publisher(
+                JointState, "/THMOS/head_control/manual_command", 1
+            )
+            self._kick_pub = self.agent.create_publisher(Int32, "/THMOS/motion/kick", 1)
+            self._save_pub = self.agent.create_publisher(Int32, "/THMOS/motion/save", 1)
 
     def _move_head(self, pitch, yaw):
+        if self.is_simulation:
+             # TODO: Send head command to Sim via Agent state?
+             # For now just log or ignore
+             return
 
         head_pose_msg = JointState()
         head_pose_msg.header = Header()
@@ -63,6 +81,11 @@ class Action:
         vel_y = float(vel_y)
         vel_theta = float(vel_theta)
 
+        if self.is_simulation:
+             # Update Agent's current command state
+             self.agent.current_cmd = [vel_x, vel_y, vel_theta]
+             return
+
         cmd = Twist()
         cmd.linear.x = vel_x
         cmd.linear.y = vel_y
@@ -77,9 +100,14 @@ class Action:
             foot: 0 for right, 1 for left
             death: 0 for normal kick, 1 for death kick
         """
+        if self.is_simulation:
+            self.logger.info(f"[Core/Action] Sim Kick: foot={foot}, death={death}")
+            # TODO: Implement Kick in Sim
+            return
+
         table = [["r", "l"], ["r_death", "l_death"]]
         try:
-            with open("/tmp/THMOS_kick", w) as fd:
+            with open("/tmp/THMOS_kick", "w") as fd:
                 fd.write(table[death][foot])
                 fd.flush()
             self.logger.info("[Core] Pipe kick command published")
@@ -90,7 +118,12 @@ class Action:
             self.logger.warning("[Core] Fallback to ros2 kick command published")
 
     def save_ball(self, direction):
+        if self.is_simulation:
+            self.logger.info(f"[Core/Action] Sim Save: dir={direction}")
+            return
+
         save_msg = Int32()
         save_msg.data = direction
         self._save_pub.publish(save_msg)
         self.logger.info("[Core] Save command published")
+

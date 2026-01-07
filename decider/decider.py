@@ -204,23 +204,174 @@ class Agent(Node):
         return self._config
 
 
-if __name__ == "__main__":
-    """Main entry point for the decider program."""
-    rclpy.init(args=sys.argv)
-    agent = Agent(sys.argv)
 
-    def signal_handler(sig, frame):
-        if agent:
-            print("\n")
-            agent.get_logger().warning(f"[Core] Interrupted")
+class SimAgent:
+    """
+    Agent for Simulation mode (ZeroMQ, No ROS).
+    Mimics the interface of Agent.
+    """
+    def __init__(self, args=None, ip="127.0.0.1", port="5555"):
+        # Setup logging (std out)
+        logging.basicConfig(level=logging.INFO)
+        self.logger = logging.getLogger("SimDecider")
+        self.logger.info("[SimCore] Initializing SimAgent in ROS-Free Mode")
+        
+        self.is_simulation = True
+        self._config = configuration.load_config()
+        
+        # Init ZMQ Client
+        from interfaces.sim_client import SimClient
+        self.client = SimClient(ip=ip, port=port)
+        
+        # Init Interfaces (mocking or adapting)
+        # We need to tell them we are in simulation
+        self._action = interfaces.action.Action(self) 
+        self._vision = interfaces.vision.Vision(self)
+        
+        self.logger.info("[SimCore] Core initialized. Calling user's init()")
+        user_entry.init(self)
+        
+        # State
+        self.current_cmd = [0.0, 0.0, 0.0]
+
+    def get_logger(self):
+        return self.logger
+
+    def get_clock(self):
+        # Mock clock for simple time access
+        class MockClock:
+            def now(self):
+                class MockTime:
+                    def to_msg(self):
+                        return time.time()
+                return MockTime()
+        return MockClock()
+
+    def run(self):
+        self.logger.info("[SimCore] Starting Loop...")
+        while True:
             try:
-                agent.stop()
-                agent.destroy_node()
-                rclpy.shutdown()
+                # 1. User Loop (Think)
+                user_entry.loop(self)
+                
+                # 2. Sync with Sim (Action -> State)
+                # Send current_cmd, receive new state
+                state = self.client.communicate(self.current_cmd)
+                
+                if state:
+                    # 3. Update Perception
+                    self._vision.update_from_sim_state(state.get("state", {}))
+                
+                # Optional: Sleep to limit rate if sim is too fast? 
+                # ZMQ is lockstep, so speed is determined by Sim + Network + Think time.
+                # No sleep needed for max speed.
+                
+            except KeyboardInterrupt:
+                break
             except Exception as e:
-                print(f"======== [Core] Error during stop command in signal handler: {e} ========")
-            sys.exit(0)
+                self.logger.error(f"[SimCore] Error in loop: {e}")
+                traceback.print_exc()
+                break
+        
+        self.stop()
+
+    # --- Action Interface ---
+    def cmd_vel(self, vel_x: float, vel_y: float, vel_theta: float) -> None:
+        """Set robot velocity (Store for next sync step)."""
+        # Apply scaling logic same as Agent.cmd_vel
+        vel_x *= self._config.get("max_walk_vel_x", 0.25)
+        vel_y *= self._config.get("max_walk_vel_y", 0.1)
+        vel_theta *= self._config.get("max_walk_vel_theta", 0.5)
+        # ... (Clipping logic omitted for brevity, user can copy if needed, or we refactor logic to utils)
+        # Ideally we reuse the clipping logic. 
+        # For compatibility, let's just copy the logic or call _action.cmd_vel
+        
+        # We delegate to _action which handles Sim check
+        self._action.cmd_vel(vel_x, vel_y, vel_theta)
+
+    def move_head(self, pitch: float, yaw: float) -> None:
+        self._action._move_head(pitch, yaw)
+
+    def stop(self, sleep_time: float = 0) -> None:
+        self.current_cmd = [0.0, 0.0, 0.0]
+        self._action.cmd_vel(0.0, 0.0, 0.0)
+        time.sleep(sleep_time)
+
+    def kick(self, foot=0, death=0) -> None:
+        self._action.do_kick(foot, death)
+    
+    def save_ball(self, direction=1):
+        self._action.save_ball(direction)
+
+    def angle_normalize(self, angle: float) -> float:
+        if angle is None: return None
+        angle = angle % (2 * math.pi)
+        if angle > math.pi: angle -= 2 * math.pi
+        elif angle < -math.pi: angle += 2 * math.pi
+        return angle
+
+    # --- Vision Proxies ---
+    # Redirect calls to self._vision same as Agent
+    def relocate(self, x=0, y=0, theta=0): return self._vision.relocate(x, y, theta)
+    def get_objects(self): return self._vision.get_objects()
+    def get_self_pos(self): return self._vision.self_pos
+    def get_self_yaw(self): return self._vision.self_yaw
+    def get_ball_pos(self): return self._vision.get_ball_pos() if self.get_if_ball() else [None, None]
+    
+    def get_ball_angle(self):
+        ball_pos = self.get_ball_pos()
+        if ball_pos[0] is None: return None
+        if ball_pos[0] == 0 and ball_pos[1] == 0: return None
+        return -math.atan2(ball_pos[0], ball_pos[1])
+
+    def get_ball_pos_in_vis(self): return self._vision.get_ball_pos_in_vis()
+    def get_ball_pos_in_map(self): return self._vision.get_ball_pos_in_map()
+    def get_if_ball(self): return self._vision.get_if_ball()
+    
+    def get_if_close_to_ball(self):
+        return (self.get_ball_distance() < self._config.get("close_to_ball_threshold", 0.5)) if self.get_if_ball() else False
+
+    def get_ball_distance(self): return self._vision.ball_distance if self.get_if_ball() else 1e6
+    def get_neck(self): return self._vision.neck
+    def get_head(self): return self._vision.head
+    def get_ball_history(self): return self._vision.get_ball_history()
+    def get_config(self): return self._config
 
 
-    signal.signal(signal.SIGINT, signal_handler) 
-    rclpy.spin(agent)
+if __name__ == "__main__":
+    """Main entry point."""
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--simulation", action="store_true", help="Run in Sim Mode (ZMQ, No ROS)")
+    parser.add_argument("--ip", default="127.0.0.1", help="Sim IP")
+    parser.add_argument("--port", default="5555", help="Sim Port")
+    
+    # We need to handle known vs unknown args because ROS args might be present if users mistake
+    # But since we control the call:
+    args, unknown = parser.parse_known_args()
+
+    if args.simulation:
+        # Simulation Mode
+        import logging
+        agent = SimAgent(args, ip=args.ip, port=args.port)
+        agent.run()
+    else:
+        # ROS Mode
+        rclpy.init(args=sys.argv)
+        agent = Agent(sys.argv)
+    
+        def signal_handler(sig, frame):
+            if agent:
+                print("\n")
+                agent.get_logger().warning(f"[Core] Interrupted")
+                try:
+                    agent.stop()
+                    agent.destroy_node()
+                    rclpy.shutdown()
+                except Exception as e:
+                    print(f"======== [Core] Error during stop command in signal handler: {e} ========")
+                sys.exit(0)
+
+        signal.signal(signal.SIGINT, signal_handler) 
+        rclpy.spin(agent)
+

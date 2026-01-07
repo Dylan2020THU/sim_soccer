@@ -61,9 +61,17 @@ class Vision(Node):
     #   _track_ball()                        the main algorithm to move head
     #   _track_ball_stage_looking_at_ball()  looing at ball algorithm
 
+
     def __init__(self, agent):
         self.agent = agent
-        self.logger = agent.get_logger().get_child("vision_node")
+        
+        self.is_simulation = getattr(agent, "is_simulation", False)
+
+        if self.is_simulation:
+            self.logger = agent.get_logger()
+            self.logger.info("[Core/Vision] Initializing Vision in Sim Mode")
+        else:
+            self.logger = agent.get_logger().get_child("vision_node")
         
         self._ball_pos_in_vis = np.array([0, 0]) # 
         self._ball_pos_in_vis_D = np.array([0, 0])
@@ -80,6 +88,15 @@ class Vision(Node):
         self._search_ball_phase = 0
         self._ball_history = deque(maxlen=20)
         self._detected_objects = list()
+        self.head = 0.0
+        self.neck = 0.0
+
+        if self.is_simulation:
+            # No ROS Subs/Pubs
+            self._location_sub = None
+            self._vision_sub = None
+            self._relocal_pub = None
+            return
  
         # Configure QoS profile for subscriptions
         qos_profile = QoSProfile(
@@ -114,6 +131,100 @@ class Vision(Node):
             "/THMOS/relocalization",
             relc_qos_profile
         )
+
+    def update_from_sim_state(self, state: dict):
+        """
+        Update vision state directly from Sim dictionary.
+        
+        Coordinate Systems:
+        1. Velocity: X-Forward (No transform needed if Sim matches).
+        2. Relative Obs: X-Right, Y-Forward (implied). 
+           Standard Sim/Robot: X-Forward, Y-Left.
+           Transform: MOS_Rel_X = -STD_Rel_Y, MOS_Rel_Y = STD_Rel_X.
+        3. Global Map: Origin Center, Y-Axis towards Opponent Goal.
+           Assumption: Sim World has X-Axis towards Goal (Standard).
+           Transform: MOS_Map_X = -Sim_Y, MOS_Map_Y = Sim_X.
+           MOS_Map_Theta = Sim_Theta + 90 deg.
+        """
+        # 1. Update Robot Pose
+        robot = state.get("robot", {})
+        if robot:
+            # Sim State (Standard X-Goal)
+            sim_x = robot.get("x", 0.0)
+            sim_y = robot.get("y", 0.0)
+            sim_theta = robot.get("theta", 0.0) # radians
+
+            # Transform to MOS Map (Y-Goal)
+            # MOS Y is Goal -> Align with Sim X
+            # MOS X is Right -> Align with Sim -Y (if Sim Y is Left)
+            self.self_pos = np.array([-sim_y, sim_x])
+            
+            # Yaw transform
+            # Sim 0 (East/Goal) -> MOS 90 (North/Goal)
+            mos_theta_rad = sim_theta + (math.pi / 2)
+            self.self_yaw = self.agent.angle_normalize(mos_theta_rad) * 180.0 / math.pi
+            
+        # 2. Update Ball
+        ball = state.get("ball", {})
+        if ball:
+            # Sim World Coords
+            bx, by = ball.get("x"), ball.get("y")
+            
+            # MOS Map Coords
+            mos_bx = -by
+            mos_by = bx
+            self._ball_pos_in_map = np.array([mos_bx, mos_by])
+
+            # Calculate Relative Position
+            # We want Relative in MOS "Observation Frame" (X-Right).
+            # First, get relative in Global MOS Frame
+            dx_global = mos_bx - self.self_pos[0]
+            dy_global = mos_by - self.self_pos[1]
+            
+            # Rotate into Robot Body Frame (MOS Body Frame?)
+            # Wait, "Relative observation X is Right".
+            # Robot Body Frame:
+            # If MOS Map Y is Goal, and Robot faces Goal (Theta=90).
+            # Then Body Forward is +Y direction. Body Right is +X direction.
+            # We need to project dx, dy onto Body Right (X) and Body Forward (Y).
+            
+            # Current Yaw (MOS frame)
+            yaw_rad = self.self_yaw * math.pi / 180.0
+            
+            # Rotation Matrix for projecting Global to Body
+            # Body X (Right) = [cos(theta-90), sin(theta-90)] ? 
+            # Easier: Standard Rotation
+            # x_local = dx * cos(-theta) - dy * sin(-theta) -> This aligns X with Forward.
+            # But we want X to be Right.
+            
+            # Let's do Standard X-Forward first
+            # "Standard" Frame where X is Forward:
+            # Angle of vector = atan2(dy, dx) - theta
+            vec_angle = math.atan2(dy_global, dx_global) - yaw_rad
+            dist = math.sqrt(dx_global**2 + dy_global**2)
+            
+            forward_comp = dist * math.cos(vec_angle)
+            left_comp = dist * math.sin(vec_angle)
+            
+            # MOS Relative Definition:
+            # X is Right (= -Left)
+            # Y is Forward? (Implied if X is right and it's 2D)
+            rel_x = -left_comp
+            rel_y = forward_comp
+            
+            self._ball_pos = np.array([rel_x, rel_y])
+            self.ball_distance = dist
+            self._last_ball_time = time.time()
+            
+            self._detected_objects = [{
+                'label': 'ball',
+                'relative_pos': self._ball_pos,
+                'absolute_pos': self._ball_pos_in_map,
+                'distance': self.ball_distance,
+                'confidence': 1.0,
+                'bounding_box_center': np.array([0,0]), 
+                'timestamp': time.time()
+            }]
 
 
     def _position_callback(self, msg):
@@ -247,8 +358,15 @@ class Vision(Node):
         """
         
         # 检查是否有有效的视觉数据
-        if np.all(self._ball_pos_in_vis == 0):
+        if np.all(self._ball_pos_in_vis == 0) and not self.is_simulation:
+             # In Sim Mode we might not simulate vision pixels yet,
+             # so we skip this check or Ensure update_from_sim_state fills it with dummy
+             pass
+        
+        if np.all(self._ball_pos_in_vis == 0) and not self.is_simulation:
             return False
+        
+        # In Sim Mode, we trust _last_ball_time
         
         # 检查视觉数据的时间戳，确保数据是最近的
         current_time = time.time()
@@ -276,4 +394,6 @@ class Vision(Node):
         msg.y = float(y) # m
         msg.theta = float(theta) # degree
         
-        self._relocal_pub.publish(msg)
+        if not self.is_simulation:
+            self._relocal_pub.publish(msg)
+
