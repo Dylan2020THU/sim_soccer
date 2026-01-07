@@ -15,7 +15,7 @@ from isaaclab.app import AppLauncher
 parser = argparse.ArgumentParser(description="ZeroMQ Bridge for SoccerLab Simulation.")
 parser.add_argument("--task", type=str, default="Isaac-Walking-G1-Play-v0", help="Name of the task.")
 parser.add_argument("--num_envs", type=int, default=1, help="Number of environments to simulate.")
-parser.add_argument("--headless", action="store_true", default=False, help="Run in headless mode.")
+
 parser.add_argument("--checkpoint", type=str, default=None, help="Path to policy checkpoint.")
 parser.add_argument("--port", type=str, default="5555", help="ZMQ Port.")
 
