@@ -9,9 +9,15 @@ from pathlib    import Path
 from datetime   import datetime
 from typing     import Optional, Dict, Any, Callable, List
 
-# ROS 2
-import rclpy
-from rclpy.node import Node
+# Conditional ROS2 Import - allows running without ROS2 in simulation mode
+ROS_AVAILABLE = False
+try:
+    import rclpy
+    from rclpy.node import Node
+    ROS_AVAILABLE = True
+except ImportError:
+    # Running without ROS2 - simulation mode only
+    Node = object  # Fallback base class
 
 # Interfaces with other components
 import interfaces.action
@@ -210,14 +216,32 @@ class SimAgent:
     Agent for Simulation mode (ZeroMQ, No ROS).
     Mimics the interface of Agent.
     """
+    
+    class _ROS2CompatibleLogger:
+        """Wrapper to provide ROS2-like logger interface using Python logging."""
+        def __init__(self, name):
+            self._logger = logging.getLogger(name)
+        
+        def get_child(self, suffix):
+            """Mimic ROS2 get_child - returns a logger with hierarchical name."""
+            return SimAgent._ROS2CompatibleLogger(f"{self._logger.name}.{suffix}")
+        
+        def info(self, msg): self._logger.info(msg)
+        def debug(self, msg): self._logger.debug(msg)
+        def warning(self, msg): self._logger.warning(msg)
+        def error(self, msg): self._logger.error(msg)
+        def fatal(self, msg): self._logger.critical(msg)
+    
     def __init__(self, args=None, ip="127.0.0.1", port="5555"):
         # Setup logging (std out)
         logging.basicConfig(level=logging.INFO)
-        self.logger = logging.getLogger("SimDecider")
+        self.logger = SimAgent._ROS2CompatibleLogger("SimDecider")
         self.logger.info("[SimCore] Initializing SimAgent in ROS-Free Mode")
         
         self.is_simulation = True
         self._config = configuration.load_config()
+        self.id = self._config.get("id", 0)
+        self.logger.info(f"[SimCore] Robot ID: {self.id}")
         
         # Init ZMQ Client
         from interfaces.sim_client import SimClient
@@ -227,6 +251,12 @@ class SimAgent:
         # We need to tell them we are in simulation
         self._action = interfaces.action.Action(self) 
         self._vision = interfaces.vision.Vision(self)
+        
+        # [NEW] Integrate GameController and Communication
+        from interfaces.gamecontroller import GameController
+        from interfaces.communication import Communication
+        self.gamecontroller = GameController(self)
+        self.communication = Communication(self)
         
         self.logger.info("[SimCore] Core initialized. Calling user's init()")
         user_entry.init(self)
@@ -256,11 +286,16 @@ class SimAgent:
                 
                 # 2. Sync with Sim (Action -> State)
                 # Send current_cmd, receive new state
-                state = self.client.communicate(self.current_cmd)
+                state = self.client.communicate(self.current_cmd, robot_id=self.id)
                 
                 if state:
                     # 3. Update Perception
                     self._vision.update_from_sim_state(state.get("state", {}))
+                    # [NEW] Update GameController and Communication
+                    # Assuming state structure: {"state": {...}, "gamecontroller": {...}, "communication": {...}}
+                    # Adjust keys based on actual ZMQ protocol
+                    self.gamecontroller.update(state.get("gamecontroller", {}))
+                    self.communication.update(state.get("communication", {}))
                 
                 # Optional: Sleep to limit rate if sim is too fast? 
                 # ZMQ is lockstep, so speed is determined by Sim + Network + Think time.
@@ -336,6 +371,32 @@ class SimAgent:
     def get_head(self): return self._vision.head
     def get_ball_history(self): return self._vision.get_ball_history()
     def get_config(self): return self._config
+    
+    # --- Command Interface (for state machine compatibility) ---
+    def get_command(self):
+        """
+        Returns the current command dict for state machines.
+        In simulation mode, we provide a default structure.
+        """
+        return {
+            "command": getattr(self, '_command', 'stop'),
+            "params": getattr(self, '_command_params', {})
+        }
+    
+    def set_command(self, command: str, params: dict = None):
+        """Set the current command (for external control)."""
+        self._command = command
+        self._command_params = params or {}
+
+    def get_obstacle_avoidance_velocity(self):
+        """
+        Dummy implementation for obstacle avoidance velocity.
+        In simulation, we assume no obstacles or handle them differently for now.
+        Returns:
+            tuple: (vx, vy, vtheta)
+        """
+        return None, None, None
+
 
 
 if __name__ == "__main__":
@@ -351,12 +412,20 @@ if __name__ == "__main__":
     args, unknown = parser.parse_known_args()
 
     if args.simulation:
-        # Simulation Mode
+        # Simulation Mode (ROS-free)
         import logging
         agent = SimAgent(args, ip=args.ip, port=args.port)
         agent.run()
     else:
-        # ROS Mode
+        # ROS Mode - check if ROS2 is available
+        if not ROS_AVAILABLE:
+            print("=" * 60)
+            print("[ERROR] ROS2 is not available!")
+            print("To run in simulation mode without ROS2, use: --simulation")
+            print("To run in ROS2 mode, please install rclpy first.")
+            print("=" * 60)
+            sys.exit(1)
+            
         rclpy.init(args=sys.argv)
         agent = Agent(sys.argv)
     
@@ -374,4 +443,5 @@ if __name__ == "__main__":
 
         signal.signal(signal.SIGINT, signal_handler) 
         rclpy.spin(agent)
+
 

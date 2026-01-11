@@ -264,12 +264,17 @@ def main():
                 msg = zmq_server.socket.recv_json(flags=flags)
                 
                 # Parse Msg
-                # Msg format: {"cmd": [vx, vy, w], "timestamp": float}
+                # Msg format: {"cmd": [vx, vy, w], "timestamp": float, "id": int}
                 cmd = msg.get("cmd", [0.0, 0.0, 0.0])
                 client_ts = msg.get("timestamp", 0)
+                robot_id = msg.get("id", 0)
                 
+                # DEBUG: Log non-zero commands
+                if any(abs(c) > 0.001 for c in cmd):
+                    logger.info(f"[SimServer] Received ZMQ CMD for Robot {robot_id}: {cmd}")
+
                 # Apply Command
-                bridge.set_command(cmd[0], cmd[1], cmd[2])
+                bridge.set_command(cmd[0], cmd[1], cmd[2], robot_id=robot_id)
                 
                 # Step Sim
                 t_start = time.time()

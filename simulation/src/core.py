@@ -19,7 +19,11 @@ from rsl_rl.modules import ActorCritic
 class SimBridge:
     def __init__(self, env_cfg, agent_cfg, task_name, device="cuda", enable_webview=False, webview_port=5811):
         self.device = device
-        self.current_command = torch.tensor([0.0, 0.0, 0.0], device=self.device)
+        # NOTE: self.current_commands will be initialized during policy loading/adaptation when we know num_agents
+        # Fallback for now
+        self.current_commands = torch.zeros((1, 3), device=self.device)
+        self.num_agents = 1
+
         self.reset_needed = False
         
         # Override velocity commands to read from self.current_command
@@ -202,6 +206,11 @@ class SimBridge:
                 self._checkpoint_output_dim = ckpt_output_dim
                 self._num_agents = env_obs_dim // ckpt_input_dim if env_obs_dim and ckpt_input_dim else 1
                 
+                # Resize current_commands to match num_agents
+                self.num_agents = self._num_agents
+                self.current_commands = torch.zeros((self.num_agents, 3), device=self.device)
+                print(f"[SimBridge] Initialized command buffer for {self.num_agents} agents.")
+                
                 self.policy = new_policy
                 print(f"[SimBridge] Successfully loaded Single-Agent Policy!")
                 print(f"[SimBridge] Will adapt obs: {env_obs_dim} -> {self._num_agents} x {ckpt_input_dim}")
@@ -243,6 +252,11 @@ class SimBridge:
                     self._num_agents = env_obs_dim // jit_input_dim
                     self._is_jit_policy = True
                     
+                    # Resize current_commands
+                    self.num_agents = self._num_agents
+                    self.current_commands = torch.zeros((self.num_agents, 3), device=self.device)
+                    print(f"[SimBridge] Initialized command buffer for {self.num_agents} agents.")
+                    
                     print(f"[SimBridge] JIT policy requires adaptation (Single-Agent -> Multi-Agent)")
                     print(f"[SimBridge] Will adapt obs: {env_obs_dim} -> {self._num_agents} x {jit_input_dim}")
                     print(f"[SimBridge] Will adapt act: {self._num_agents} x {jit_output_dim} -> {env_act_dim}")
@@ -261,12 +275,34 @@ class SimBridge:
 
 
     def _get_velocity_command(self, env, command_name):
-        # Return current command repeated for num_envs
-        # Shape: (num_envs, 3)
-        return self.current_command.unsqueeze(0).repeat(env.num_envs, 1)
+        # Return current commands
+        # Shape: (num_envs, 3) where num_envs should equal num_agents * num_parallel_envs
+        # Here we assume 1 parallel env multiple agents.
+        # If env.num_envs != self.num_agents, we might need repeating or careful handling.
+        
+        # Simple case: Direct match
+        if env.num_envs == self.num_agents:
+            return self.current_commands
+        
+        # If mismatch (e.g. multiple parallel envs of multiple agents?)
+        # For now assume repeat
+        if env.num_envs > self.num_agents:
+             # Repeat the whole block? 
+             # Or is it (env1_a1, env1_a2, ..., env2_a1, ...)
+             # Let's assume broadcasting if shapes mismatch isn't handled by environment naturally
+             pass
+             
+        return self.current_commands
 
-    def set_command(self, vx, vy, w):
-        self.current_command[:] = torch.tensor([vx, vy, w], device=self.device)
+    def set_command(self, vx, vy, w, robot_id=0):
+        """Set velocity command for a specific robot."""
+        if robot_id < 0 or robot_id >= self.num_agents:
+            # print(f"[SimBridge Warning] Robot ID {robot_id} out of range [0, {self.num_agents-1}]")
+            # Auto-expand if needed? Or just ignore/clamp?
+            # For robustness, let's clamp or ignore.
+            return
+
+        self.current_commands[robot_id] = torch.tensor([vx, vy, w], device=self.device)
 
     def step(self):
         try:
@@ -291,7 +327,32 @@ class SimBridge:
                         # Reshape: (N, Agents*Dims) -> (N*Agents, Dims)
                         obs = obs.view(-1, num_agents, expected_dim).reshape(-1, expected_dim)
                     
+                    # FORCE COMMAND INJECTION: Directly patch observation tensor
+                    # Index 9, 10, 11 are velocity commands (lin_x, lin_y, ang_z) for G1
+                    if obs.shape[1] >= 12:
+                        # Apply commands to specific agents
+                        # Obs Shape: (N*Agents, Dims)
+                        # We need to broadcast self.current_commands (Agents, 3) to match.
+                        
+                        # If N=1 (one env, multiple agents), obs is (Agents, Dims)
+                        if obs.shape[0] == self.num_agents:
+                            obs[:, 9:12] = self.current_commands
+                        else:
+                            # N > 1, repeat current_commands N times
+                            # Order is usually env1_all_agents, env2_all_agents...
+                            # So we repeat the block
+                            n_envs = obs.shape[0] // self.num_agents
+                            obs[:, 9:12] = self.current_commands.repeat(n_envs, 1)
+
+                    # DEBUG: Inspect velocity command in observation (Indices 9,10,11)
+                    if torch.rand(1).item() < 0.01: # 1% chance
+                        cmd_obs = obs[0, 9:12]
+                        # Only print if non-zero to reduce noise
+                        if cmd_obs.abs().sum() > 0.001:
+                             print(f"[SimBridge DEBUG] Obs[0] Command (idx 9-11): {cmd_obs.cpu().numpy()}")
+
                     # ActorCritic.forward() raises NotImplementedError
+                    # Use act_inference() for ActorCritic, direct call for JIT
                     # Use act_inference() for ActorCritic, direct call for JIT
                     if hasattr(self.policy, 'act_inference'):
                         actions = self.policy.act_inference(obs)
@@ -351,29 +412,29 @@ class SimBridge:
                         "team": team
                     }
                 except Exception as e:
-                    # Entity exists but data access failed (sim mismatch?)
                     return None
             return None
 
-        # Check for standard single robot "robot" (legacy)
-        # Note: Unified env might stick to rp0/bp0 naming even for single robot cases
-        # But keeping this for backward compatibility with Velocity task
+        # Check for standard single robot "robot" (legacy / Velocity task)
         if "robot" in base_env.scene.keys():
              data = get_entity_state("robot", "red")
-             if data: robots_state.append(data)
+             if data: 
+                 robots_state.append(data)
         
-        # Check for dynamic players
+        # Check for dynamic players (Soccer task uses 'robot_rp{i}' and 'robot_bp{i}')
         # Red team
         for i in range(red_count):
-            name = f"rp{i}"
+            name = f"robot_rp{i}"
             data = get_entity_state(name, "red")
-            if data: robots_state.append(data)
+            if data: 
+                robots_state.append(data)
             
         # Blue team
         for i in range(blue_count):
-            name = f"bp{i}"
+            name = f"robot_bp{i}"
             data = get_entity_state(name, "blue")
-            if data: robots_state.append(data)
+            if data: 
+                robots_state.append(data)
 
         # Ball position
         ball_pos = [0.0, 0.0, 0.0]

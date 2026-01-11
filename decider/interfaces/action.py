@@ -7,12 +7,20 @@
 #
 
 import os
-import rclpy
-from sensor_msgs.msg import JointState
-from geometry_msgs.msg import Quaternion, Twist, Pose2D, Point
-from thmos_msgs.msg import VisionDetections, VisionObj
-from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
-from std_msgs.msg import Float32MultiArray, Header, Int32
+
+# Conditional ROS2 Import - allows running without ROS2 in simulation mode
+ROS_AVAILABLE = False
+try:
+    import rclpy
+    from sensor_msgs.msg import JointState
+    from geometry_msgs.msg import Quaternion, Twist, Pose2D, Point
+    from thmos_msgs.msg import VisionDetections, VisionObj
+    from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+    from std_msgs.msg import Float32MultiArray, Header, Int32
+    ROS_AVAILABLE = True
+except ImportError:
+    # Running without ROS2 - simulation mode only
+    pass
 
 
 class Action:

@@ -9,15 +9,26 @@
 import math
 import time
 import numpy as np
-import rclpy
-from rclpy.node import Node
-from std_msgs.msg import Float32MultiArray, Header
-from sensor_msgs.msg import JointState, Imu
-from geometry_msgs.msg import Quaternion, Twist, Pose2D, Point
-from nav_msgs.msg import Odometry
-from thmos_msgs.msg import VisionDetections, VisionObj, HeadPose
-from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from collections import deque
+
+# Conditional ROS2 Import - allows running without ROS2 in simulation mode
+ROS_AVAILABLE = False
+try:
+    import rclpy
+    from rclpy.node import Node
+    from std_msgs.msg import Float32MultiArray, Header
+    from sensor_msgs.msg import JointState, Imu
+    from geometry_msgs.msg import Quaternion, Twist, Pose2D, Point
+    from nav_msgs.msg import Odometry
+    from thmos_msgs.msg import VisionDetections, VisionObj, HeadPose
+    from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+    ROS_AVAILABLE = True
+except ImportError:
+    # Running without ROS2 - provide fallback types for Vision
+    Node = object
+    # Placeholder types for type annotations (never used at runtime in sim mode)
+    VisionDetections = None
+    Pose2D = None
 
 class Vision(Node):
     # @public variants:
@@ -136,6 +147,15 @@ class Vision(Node):
         """
         Update vision state directly from Sim dictionary.
         
+        Expected state format from sim_server:
+        {
+            "robots": [
+                {"name": "robot" or "rp0", "x": float, "y": float, "theta": float, "team": "red"},
+                ...
+            ],
+            "ball": {"x": float, "y": float, "z": float}
+        }
+        
         Coordinate Systems:
         1. Velocity: X-Forward (No transform needed if Sim matches).
         2. Relative Obs: X-Right, Y-Forward (implied). 
@@ -146,8 +166,31 @@ class Vision(Node):
            Transform: MOS_Map_X = -Sim_Y, MOS_Map_Y = Sim_X.
            MOS_Map_Theta = Sim_Theta + 90 deg.
         """
-        # 1. Update Robot Pose
-        robot = state.get("robot", {})
+        # Get robot_id from config
+        robot_id = self.agent.get_config().get("id", 0)
+        
+        # 1. Update Robot Pose - parse from 'robots' array
+        robots = state.get("robots", [])
+        robot = None
+        
+        # Find our robot by index or name
+        if robots:
+            # Strategy 1: Use robot_id as index
+            if robot_id < len(robots):
+                robot = robots[robot_id]
+            # Strategy 2: Look for standard single-robot name "robot"
+            elif len(robots) == 1:
+                robot = robots[0]
+            # Strategy 3: Look for name matching "rp{id}" (red player)
+            else:
+                for r in robots:
+                    if r.get("name") == f"rp{robot_id}":
+                        robot = r
+                        break
+                # Fallback to first robot if not found
+                if robot is None and len(robots) > 0:
+                    robot = robots[0]
+        
         if robot:
             # Sim State (Standard X-Goal)
             sim_x = robot.get("x", 0.0)
@@ -163,6 +206,10 @@ class Vision(Node):
             # Sim 0 (East/Goal) -> MOS 90 (North/Goal)
             mos_theta_rad = sim_theta + (math.pi / 2)
             self.self_yaw = self.agent.angle_normalize(mos_theta_rad) * 180.0 / math.pi
+            
+            self.logger.debug(f"[Vision] Updated robot pose: pos={self.self_pos}, yaw={self.self_yaw:.2f}deg")
+        else:
+            self.logger.warning(f"[Vision] No robot found in state for robot_id={robot_id}")
             
         # 2. Update Ball
         ball = state.get("ball", {})
@@ -389,11 +436,15 @@ class Vision(Node):
         """
         重新定位，重置视觉数据
         """
+        if self.is_simulation or not ROS_AVAILABLE:
+            # In simulation mode or without ROS2, just log/skip
+            return
+            
         msg = Pose2D()
         msg.x = float(x)
         msg.y = float(y) # m
         msg.theta = float(theta) # degree
         
-        if not self.is_simulation:
-            self._relocal_pub.publish(msg)
+        self._relocal_pub.publish(msg)
+
 

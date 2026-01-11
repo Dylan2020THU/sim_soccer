@@ -5,8 +5,8 @@ import json
 import logging
 
 # Helper to find zmq_wrapper
-# mos-brain/decider/interfaces -> mos-brain/simulation/soccerlab_bridge/common
-COMMON_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../simulation/soccerlab_bridge/common"))
+# mos-brain/decider/interfaces -> mos-brain/simulation/src/common
+COMMON_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../simulation/src/common"))
 if COMMON_PATH not in sys.path:
     sys.path.append(COMMON_PATH)
 
@@ -33,14 +33,16 @@ class SimClient:
         self.client.connect()
         self.logger.info(f"Connected to Sim Server at {self.addr}")
         
-    def communicate(self, cmd_vel=[0.0, 0.0, 0.0]):
+    def communicate(self, cmd_vel=[0.0, 0.0, 0.0], robot_id=0):
         """
         Send command and wait for state.
         cmd_vel: [vx, vy, w]
+        robot_id: int (default 0)
         Returns: proper state dict or None on failure
         """
         req = {
             "cmd": cmd_vel,
+            "id": robot_id,
             "timestamp": time.time()
         }
         
