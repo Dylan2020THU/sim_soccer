@@ -24,9 +24,9 @@ ISAACLAB_SH="$SOCCERLAB_PATH/isaaclab.sh"
 
 if [ -f "$ISAACLAB_SH" ]; then
     echo "Found isaaclab.sh, using it to launch..."
-    "$ISAACLAB_SH" -p "$SCRIPT_DIR/sim_server.py" "$@"
+    exec "$ISAACLAB_SH" -p "$SCRIPT_DIR/../src/sim_server.py" "$@"
 else
     # Fallback to current python
     echo "isaaclab.sh not found. Using system python..."
-    python "$SCRIPT_DIR/sim_server.py" "$@"
+    exec python "$SCRIPT_DIR/../src/sim_server.py" "$@"
 fi
