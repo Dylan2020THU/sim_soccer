@@ -213,10 +213,43 @@ class SimBridge:
                 import traceback
                 traceback.print_exc()
         
-        # Method 3: JIT Load (Exported .pt)
+        # Method 3: JIT Load (Exported .pt) - with dimension adaptation support
         print(f"[SimBridge] Attempting JIT load...")
         try:
-            self.policy = torch.jit.load(path, map_location=self.device)
+            jit_policy = torch.jit.load(path, map_location=self.device)
+            
+            # Probe JIT model dimensions by inspecting its parameters
+            jit_input_dim = None
+            jit_output_dim = None
+            
+            # Try to find the first linear layer's input dim and last linear layer's output dim
+            for name, param in jit_policy.named_parameters():
+                if 'weight' in name:
+                    # First layer we find with 2D weight is likely input layer
+                    if jit_input_dim is None and param.dim() == 2:
+                        jit_input_dim = param.shape[1]
+                    # Keep updating output as we find more layers
+                    if param.dim() == 2:
+                        jit_output_dim = param.shape[0]
+            
+            print(f"[SimBridge] JIT policy dims: Input={jit_input_dim}, Output={jit_output_dim}")
+            
+            # Check if we need adaptation for this JIT policy
+            if jit_input_dim and env_obs_dim and jit_input_dim != env_obs_dim:
+                if env_obs_dim % jit_input_dim == 0:
+                    # Set up adaptation parameters
+                    self._checkpoint_input_dim = jit_input_dim
+                    self._checkpoint_output_dim = jit_output_dim
+                    self._num_agents = env_obs_dim // jit_input_dim
+                    self._is_jit_policy = True
+                    
+                    print(f"[SimBridge] JIT policy requires adaptation (Single-Agent -> Multi-Agent)")
+                    print(f"[SimBridge] Will adapt obs: {env_obs_dim} -> {self._num_agents} x {jit_input_dim}")
+                    print(f"[SimBridge] Will adapt act: {self._num_agents} x {jit_output_dim} -> {env_act_dim}")
+                else:
+                    print(f"[SimBridge] WARNING: Cannot adapt JIT policy - {env_obs_dim} not divisible by {jit_input_dim}")
+            
+            self.policy = jit_policy
             print(f"[SimBridge] Successfully loaded JIT policy from {path}")
             if hasattr(self.policy, "eval"):
                 self.policy.eval()

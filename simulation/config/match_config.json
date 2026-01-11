@@ -7,12 +7,29 @@
         "red": {
             "count": 2,
             "robot_type": "g1",
-            "spawn_positions": [[-2.0, -1.0], [-2.0, 1.0]]
+            "spawn_positions": [
+                [
+                    -2.0,
+                    -1.0,
+                    0.0
+                ],
+                [
+                    -2.0,
+                    1.0,
+                    0.0
+                ]
+            ]
         },
         "blue": {
             "count": 1,
             "robot_type": "g1",
-            "spawn_positions": [[2.0, 0.0]]
+            "spawn_positions": [
+                [
+                    2.0,
+                    0.0,
+                    3.14
+                ]
+            ]
         }
     }
 }

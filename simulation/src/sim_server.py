@@ -230,7 +230,8 @@ def main():
         default_ckpt = None
         if args_cli.robot_type == "g1":
             #  default_ckpt = os.path.join(soccerlab_path, "data/ckpts/g1/g1_29d_loco_walk.pt")
-            default_ckpt = os.path.join(soccerlab_path, "/home/charlie/wj_ws/MOS_sim/soccerLab/logs/rsl_rl/g1_loco/2026-01-08_16-18-29_cliped_with_lin/exported/policy.pt")
+            # Use the original model checkpoint (not JIT) - the adaptation system handles dimension conversion
+            default_ckpt = os.path.join(soccerlab_path, "logs/rsl_rl/g1_loco/2026-01-08_16-18-29_cliped_with_lin/exported/policy.pt")
         
         if default_ckpt and os.path.exists(default_ckpt):
              logger.info(f"Loading default checkpoint for {args_cli.robot_type}: {default_ckpt}")
@@ -274,6 +275,13 @@ def main():
                 t_start = time.time()
                 state = bridge.step()
                 t_step = time.time() - t_start
+
+                # Real-time sync (Default)
+                # Get dt from env (default to 0.02 if not present)
+                sim_dt = getattr(bridge.env.unwrapped, "step_dt", 0.02) 
+                sleep_time = sim_dt - t_step
+                if sleep_time > 0:
+                    time.sleep(sleep_time)
                 
                 # Prepare Reply
                 response = {
