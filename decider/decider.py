@@ -233,10 +233,27 @@ class SimAgent:
         def fatal(self, msg): self._logger.critical(msg)
     
     def __init__(self, args=None, ip="127.0.0.1", port="5555"):
-        # Setup logging (std out)
-        logging.basicConfig(level=logging.INFO)
+        # Setup logging (std out and file)
+        log_fmt = logging.Formatter('%(asctime)s [%(levelname)s] %(name)s: %(message)s')
+        
+        # Console Handler
+        console_handler = logging.StreamHandler()
+        console_handler.setFormatter(log_fmt)
+        
+        # File Handler
+        try:
+            os.makedirs("logs", exist_ok=True)
+            file_handler = logging.FileHandler(f"logs/sim_decider_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
+            file_handler.setFormatter(log_fmt)
+            handlers = [console_handler, file_handler]
+        except Exception as e:
+            print(f"Failed to setup file logging: {e}")
+            handlers = [console_handler]
+
+        logging.basicConfig(level=logging.INFO, handlers=handlers, force=True)
+        
         self.logger = SimAgent._ROS2CompatibleLogger("SimDecider")
-        self.logger.info("[SimCore] Initializing SimAgent in ROS-Free Mode")
+        self.logger.info("[SimCore] Initializing SimAgent in ROS-Free Mode (Logging to Console + File)")
         
         self.is_simulation = True
         self._config = configuration.load_config()

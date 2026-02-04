@@ -17,7 +17,7 @@ from rsl_rl.modules import ActorCritic
 # We'll handle sys.path in sim_server.py/main setup, so we assume successful import here.
 
 class SimBridge:
-    def __init__(self, env_cfg, agent_cfg, task_name, device="cuda", enable_webview=False, webview_port=5811):
+    def __init__(self, env_cfg, agent_cfg, task_name, device="cuda", enable_webview=False, webview_port=5811, existing_webview_wrapper=None):
         self.device = device
         # NOTE: self.current_commands will be initialized during policy loading/adaptation when we know num_agents
         # Fallback for now
@@ -28,16 +28,13 @@ class SimBridge:
         
         # Override velocity commands to read from self.current_command
         # Iterate over all policy observations to find velocity_commands terms
-        if hasattr(env_cfg.observations, "policy"):
-             for attr_name, attr_val in env_cfg.observations.policy.__dict__.items():
-                 # ConfigClass attributes might be stored differently, but __dict__ usually works
-                 # Check if it looks like a velocity command term
-                 if "velocity_commands" in attr_name and hasattr(attr_val, "func"):
-                      # Bind the function
-                      # We need to wrap it to match signature (env, command_name)
-                      # SimBridge._get_velocity_command has (env, command_name) signature.
-                      attr_val.func = self._get_velocity_command
-                      print(f"[SimBridge] Hooked ZMQ command to {attr_name}")
+        for attr_name in dir(env_cfg.observations.policy):
+             if not attr_name.startswith("_"):
+                  attr_val = getattr(env_cfg.observations.policy, attr_name, None)
+                  if isinstance(attr_val, ObsTerm) and "velocity_commands" in attr_name:
+                       # Create a new ObsTerm that reads from self.current_command
+                       setattr(env_cfg.observations.policy, attr_name, self._create_command_override_obs_term(attr_name))
+                       print(f"[SimBridge] Hooked ZMQ command to {attr_name}")
 
         # Create Environment
         render_mode = "rgb_array" if enable_webview else None
@@ -50,16 +47,26 @@ class SimBridge:
         # Webview Wrapper
         self.webview_wrapper = None
         if enable_webview:
-            try:
+            if existing_webview_wrapper is not None:
+                # Reuse existing webview wrapper (for restart scenarios)
                 from labWebView.wrapper import RenderEnvWrapper
-                self.env = RenderEnvWrapper(self.env)
+                # Re-wrap the new env with existing wrapper's Flask/SocketIO
+                existing_webview_wrapper.env = self.env
+                self.env = existing_webview_wrapper
                 self.webview_wrapper = self.env
-                self.env.web_run(port=webview_port)
-                print(f"[SimBridge] labWebView started at http://localhost:{webview_port}")
-            except ImportError as e:
-                print(f"[SimBridge] Failed to import labWebView: {e}")
-            except Exception as e:
-                 print(f"[SimBridge] Failed to start labWebView: {e}")
+                print(f"[SimBridge] Reusing existing labWebView wrapper")
+            else:
+                # Create new webview wrapper
+                try:
+                    from labWebView.wrapper import RenderEnvWrapper
+                    self.env = RenderEnvWrapper(self.env)
+                    self.webview_wrapper = self.env
+                    self.env.web_run(port=webview_port)
+                    print(f"[SimBridge] labWebView started at http://localhost:{webview_port}")
+                except ImportError as e:
+                    print(f"[SimBridge] Failed to import labWebView: {e}")
+                except Exception as e:
+                     print(f"[SimBridge] Failed to start labWebView: {e}")
         
         # RSL-RL Wrapper
         self.env = RslRlVecEnvWrapper(self.env, clip_actions=agent_cfg.clip_actions)
@@ -359,7 +366,7 @@ class SimBridge:
                     else:
                         actions = self.policy(obs)
                     
-                    if num_agents > 1:
+                if num_agents > 1:
                         # Reshape actions back: (N*Agents, ActDim) -> (N, Agents*ActDim)
                         actions = actions.view(self.env.num_envs, num_agents, -1).reshape(self.env.num_envs, -1)
         

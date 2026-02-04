@@ -76,8 +76,8 @@ def game(agent) -> None:
     """
     # Choose one of the following modes:
     # _game_logic(agent)           # Full game logic
-    # _test_dribble(agent)         # Test dribble
-    _test_go_back_to_field(agent)# Test go back to field
+    _test_dribble(agent)         # Test dribble
+    # _test_go_back_to_field(agent)# Test go back to field
     # _test_find_ball(agent)       # Test find ball
     # _test_state_machines(agent)    # Default: Test basic state machines
     # _test_basic_interfaces(agent)  # Test basic observation & control
@@ -304,7 +304,7 @@ def _test_dribble(agent) -> None:
     """
     Test dribble state machine
     """
-    agent.state_machine_runners['dribble']()
+    agent.state_machine_runners['dribble'](aim_yaw=0)
 
 
 def _test_go_back_to_field(agent) -> None:

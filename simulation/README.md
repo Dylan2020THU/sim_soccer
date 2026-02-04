@@ -12,7 +12,7 @@ This directory contains the simulation server, configuration, and scripts for th
 
 To launch the simulation:
 ```bash
-bash /home/charlie/wj_ws/MOS_sim/mos-brain/simulation/scripts/launch_sim.sh --headless --webview --task Loco-Unified-Soccer
+bash /home/charlie/wj_ws/MOS_sim/mos-brain/simulation/scripts/launch_sim.sh --headless --webview --task Robocup-Soccer
 ```
 
 The simulation server will start and listen for ZMQ connections on port 5555.

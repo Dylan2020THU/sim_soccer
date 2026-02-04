@@ -109,6 +109,16 @@ dribble:
   good_horizontal_position_to_ball_lower_threshold_m: 0.00
   lost_ball_x_threshold_m: 0.10
   lost_ball_distance_threshold_m: 0.9
+
+  # P-Control Dribble Parameters
+  kp_x: 1.5
+  kp_y: 1.5
+  kp_theta: 1.2
+  dist_setup: 0.45      # Distance to maintain when not aligned
+  dist_dribble: -0.5    # Distance to push ball (negative means 'inside' ball/forced contact)
+  align_threshold_deg: 15.0  # Degrees within which we switch to 'push' mode
+  max_vel_linear: 1.0
+  orbit_efficiency: 0.8 # scaler for tangent velocity when orbiting
   dribble_0_y: 7
   dribble_forward_vel_y: 1 # 0.5
   camera_bias: 0.035  # camera bias in x direction

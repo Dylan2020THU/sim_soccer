@@ -239,80 +239,139 @@ def main():
         else:
              logger.warning("No checkpoint provided via --checkpoint. Env might run with random policy.")
 
-    # Initialize ZMQ
+    # Initialize ZMQ (Bind once)
     import zmq
+    import importlib
     zmq_server = ZMQWrapper(socket_type=zmq.REP, addr=f"tcp://*:{args_cli.port}")
     zmq_server.bind()
-
-    logger.info("SimServer Ready. Waiting for client...")
 
     logger.info("SimServer Ready. Waiting for client...")
     logger.info(f"simulation_app.is_running() = {simulation_app.is_running()}")
 
     try:
-        running = True
-        while running:
-            # Check if simulation app is still valid
-            if not simulation_app.is_running():
-                logger.warning("simulation_app.is_running() returned False, but continuing...")
-                # Don't break - in headless mode this can return False even when functional
+        restart_loop_running = True
+        first_run = True  # Skip re-init on first iteration since bridge already created above
+        existing_webview_wrapper = None  # Will be set from first bridge
+        
+        while restart_loop_running:
+            # Only re-initialize on restart, not on first run
+            if not first_run:
+                # 1. Parse/Re-parse Env Config (Crucial for restart to pick up new config)
+                # We need to reload the config module if it was changed
+                if "soccerTask.soccer.robocup_soccer_env_cfg" in sys.modules:
+                    import soccerTask.soccer.robocup_soccer_env_cfg
+                    importlib.reload(soccerTask.soccer.robocup_soccer_env_cfg)
+                    logger.info("Reloaded robocup_soccer_env_cfg module.")
+                
+                # Re-parse env cfg to get fresh class
+                try:
+                     env_cfg = parse_env_cfg(
+                        args_cli.task, 
+                        device=args_cli.device, 
+                        num_envs=args_cli.num_envs, 
+                        use_fabric=not args_cli.use_fabric if hasattr(args_cli, "use_fabric") else True
+                    )
+                except Exception as e:
+                    logger.error(f"Error parsing env cfg during restart: {e}")
+                    break
+
+                # 2. Initialize Bridge (reuse existing webview wrapper)
+                bridge = SimBridge(env_cfg, agent_cfg, args_cli.task, device=args_cli.device, 
+                                   enable_webview=webview_enabled, webview_port=5811,
+                                   existing_webview_wrapper=existing_webview_wrapper)
+                
+                # Load Checkpoint
+                if args_cli.checkpoint:
+                    bridge.load_checkpoint(args_cli.checkpoint)
+                else:
+                    default_ckpt = None
+                    if args_cli.robot_type == "g1":
+                        default_ckpt = os.path.join(soccerlab_path, "logs/rsl_rl/g1_loco/2026-01-08_16-18-29_cliped_with_lin/exported/policy.pt")
+                    if default_ckpt and os.path.exists(default_ckpt):
+                        logger.info(f"Loading default checkpoint: {default_ckpt}")
+                        bridge.load_checkpoint(default_ckpt)
+                    else:
+                        logger.warning("No checkpoint provided.")
             
-            # Wait for Request
-            try:
-                # Use non-blocking receive if webview is enabled to allow rendering
-                flags = zmq.NOBLOCK if webview_enabled else 0
-                msg = zmq_server.socket.recv_json(flags=flags)
+            # Save webview wrapper for reuse on restart
+            if bridge.webview_wrapper is not None:
+                existing_webview_wrapper = bridge.webview_wrapper
+            
+            first_run = False  # After first iteration, allow re-init on restart
+            logger.info("Bridge initialized. Starting Loop...")
+            
+            restart_needed = False
+            running = True
+            
+            while running:
+                # Check app health
+                if not simulation_app.is_running():
+                    logger.warning("simulation_app stopped running.")
+                    restart_loop_running = False
+                    break
                 
-                # Parse Msg
-                # Msg format: {"cmd": [vx, vy, w], "timestamp": float, "id": int}
-                cmd = msg.get("cmd", [0.0, 0.0, 0.0])
-                client_ts = msg.get("timestamp", 0)
-                robot_id = msg.get("id", 0)
-                
-                # DEBUG: Log non-zero commands
-                if any(abs(c) > 0.001 for c in cmd):
-                    logger.info(f"[SimServer] Received ZMQ CMD for Robot {robot_id}: {cmd}")
+                # CHECK RESTART SIGNAL from Webview
+                if bridge.webview_wrapper and bridge.webview_wrapper.msg_buffer.restart_match:
+                    new_config = bridge.webview_wrapper.msg_buffer.restart_match
+                    bridge.webview_wrapper.msg_buffer.restart_match = None
+                    
+                    logger.info(f"Restart Signal Received! Config: {new_config}")
+                    
+                    # Update Env Var
+                    os.environ["SOCCER_MATCH_CONFIG"] = json.dumps(new_config)
+                    
+                    # Trigger restart
+                    restart_needed = True
+                    running = False # Break inner loop
+                    continue
 
-                # Apply Command
-                bridge.set_command(cmd[0], cmd[1], cmd[2], robot_id=robot_id)
-                
-                # Step Sim
-                t_start = time.time()
-                state = bridge.step()
-                t_step = time.time() - t_start
+                # Prepare ZMQ receive
+                try:
+                    flags = zmq.NOBLOCK if webview_enabled else 0
+                    msg = zmq_server.socket.recv_json(flags=flags)
+                    
+                    cmd = msg.get("cmd", [0.0, 0.0, 0.0])
+                    client_ts = msg.get("timestamp", 0)
+                    robot_id = msg.get("id", 0)
+                    
+                    if any(abs(c) > 0.001 for c in cmd):
+                        logger.info(f"[SimServer] CMD {robot_id}: {cmd}")
 
-                # Real-time sync (Default)
-                # Get dt from env (default to 0.02 if not present)
-                sim_dt = getattr(bridge.env.unwrapped, "step_dt", 0.02) 
-                sleep_time = sim_dt - t_step
-                if sleep_time > 0:
-                    time.sleep(sleep_time)
-                
-                # Prepare Reply
-                response = {
-                    "state": state,
-                    "sim_timestamp": time.time(),
-                    "step_latency": t_step,
-                    "ack_timestamp": client_ts
-                }
-                
-                zmq_server.send_json(response)
-                
-            except zmq.Again:
-                # No message received
-                if webview_enabled:
-                     # Auto-step to keep webview alive
-                     bridge.step()
-                continue
-            except Exception as e:
-                logger.error(f"Critical error in loop: {e}")
-                import traceback
-                traceback.print_exc()
-                break # Exit loop on critical error to prevent infinite spam and allow shutdown
+                    bridge.set_command(cmd[0], cmd[1], cmd[2], robot_id=robot_id)
+                    
+                    # Step
+                    t_start = time.time()
+                    state = bridge.step()
+                    t_step = time.time() - t_start
+
+                    sim_dt = getattr(bridge.env.unwrapped, "step_dt", 0.02)
+                    sleep_time = sim_dt - t_step
+                    if sleep_time > 0: time.sleep(sleep_time)
+                    
+                    response = {"state": state, "sim_timestamp": time.time(), "step_latency": t_step, "ack_timestamp": client_ts}
+                    zmq_server.send_json(response)
+                    
+                except zmq.Again:
+                    if webview_enabled: bridge.step()
+                    continue
+                except Exception as e:
+                    logger.error(f"Critical error in loop: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    restart_loop_running = False # Stop completely on critical error
+                    break
+            
+            # Inner loop exited
+            logger.info("Closing Bridge...")
+            bridge.close()
+            
+            if not restart_needed:
+                restart_loop_running = False
+            
     except KeyboardInterrupt:
         logger.info("KeyboardInterrupt received, shutting down...")
     finally:
-        bridge.close()
+        # bridge.close() handled in loop
         zmq_server.close()
         simulation_app.close()
 
