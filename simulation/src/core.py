@@ -325,6 +325,58 @@ class SimBridge:
                     self.webview_wrapper.msg_buffer.reset_env = False
                     self.obs, _ = self.env.reset()
 
+                # [NEW] Handle Initial Positions (Teleport)
+                if self.webview_wrapper and self.webview_wrapper.msg_buffer.apply_initial_positions:
+                    print("[SimBridge] Applying Initial Positions (Teleporting)...")
+                    self.webview_wrapper.msg_buffer.apply_initial_positions = False
+                    positions = self.webview_wrapper.msg_buffer.initial_positions # {name: [x,y,theta]}
+                    
+                    base_env = self.env.unwrapped
+                    import math
+                    
+                    # Iterate all robots and teleport
+                    # InteractiveScene might not mimic dict .items() fully, so use keys
+                    for name in base_env.scene.keys():
+                        entity = base_env.scene[name]
+                        if name.startswith("robot_"):
+                            # Read current root state to preserve structure
+                            # root_state: (NumEnvs, 13) [pos(3), quat(4), lin_vel(3), ang_vel(3)]
+                            # We assume NumEnvs=1 for this logic or broadcast
+                            current_state = entity.data.default_root_state.clone() # Use default as base
+                            if current_state.shape[0] != self.env.num_envs:
+                                 current_state = current_state.repeat(self.env.num_envs, 1)
+
+                            if name in positions:
+                                # Active Robot
+                                p = positions[name]
+                                # Pos
+                                current_state[:, 0] = p[0]
+                                current_state[:, 1] = p[1]
+                                current_state[:, 2] = 0.57 # Default K1 standing height or slight drop
+                                
+                                # Yaw to Quat (w, x, y, z)
+                                half_theta = p[2] * 0.5
+                                current_state[:, 3] = math.cos(half_theta)
+                                current_state[:, 4] = 0.0
+                                current_state[:, 5] = 0.0
+                                current_state[:, 6] = math.sin(half_theta)
+                            else:
+                                # Unused Robot -> Teleport to "Bench" (Far away)
+                                current_state[:, 0] = 100.0 + hash(name) % 20
+                                current_state[:, 1] = 100.0
+                                current_state[:, 2] = -2.0 # Underground
+                                
+                            # Zero velocities
+                            current_state[:, 7:13] = 0.0
+                            
+                            # Apply
+                            entity.write_root_state_to_sim(current_state)
+                            entity.reset() # Refresh view
+                    
+                    # Also reset physics buffers slightly to ensuring stability
+                    # self.env.reset() # Loop reset? No, infinite loop.
+                    # Just waiting for next step is fine.
+
                 if self.policy is None:
                     # Fallback: Send zero actions for testing purposes
                     num_actions = getattr(self.env, "num_actions", 29)

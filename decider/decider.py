@@ -149,16 +149,22 @@ class Agent(Node):
             return [None, None]
 
     def get_ball_angle(self) -> Optional[float]:
-        """Calculate and return ball angle relative to robot."""
+        """Calculate and return ball angle relative to robot.
+        NEW: X-Forward, Y-Left coordinate system
+        Angle = atan2(Left, Forward) = atan2(ball_y, ball_x)
+        Positive angle = ball is to the left
+        Negative angle = ball is to the right
+        """
         ball_pos = self.get_ball_pos()
-        ball_x = ball_pos[0]
-        ball_y = ball_pos[1]
+        ball_x = ball_pos[0]  # Forward
+        ball_y = ball_pos[1]  # Left
 
         if ball_pos is not None and ball_x is not None and ball_y is not None and self.get_if_ball():
             if ball_x == 0 and ball_y == 0:
                 return None
             else:
-                angle_rad = - math.atan2(ball_x, ball_y)
+                # atan2(Left, Forward) gives angle from forward direction
+                angle_rad = math.atan2(ball_y, ball_x)
                 return angle_rad
         else:
             return None
@@ -258,7 +264,41 @@ class SimAgent:
         self.is_simulation = True
         self._config = configuration.load_config()
         self.id = self._config.get("id", 0)
-        self.logger.info(f"[SimCore] Robot ID: {self.id}")
+        self.league = self._config.get("league", "S") # Fix: Explicitly set league (Default S)
+        
+        # Override with command line arg if provided
+        if args:
+            if hasattr(args, "id") and args.id is not None:
+                self.id = args.id
+                self._config["id"] = self.id # [FIX] Also update config so Vision module sees correct Local ID
+            
+            # Determine color: priority CLI > Config
+            self.color = self._config.get("color", "red")
+            if hasattr(args, "color") and args.color is not None:
+                 self.color = args.color
+
+            # Configure team offset based on resolved color
+            if self.color:
+                import json
+                try:
+                    # Resolve config path relative to this file
+                    # mos-brain/decider/decider.py -> mos-brain/simulation/config/match_config.json
+                    cfg_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../simulation/config/match_config.json"))
+                    with open(cfg_path, 'r') as f:
+                        match_config = json.load(f)
+                    
+                    red_count = match_config.get("teams", {}).get("red", {}).get("count", 1)
+                    
+                    if self.color == "blue":
+                        self.logger.info(f"[SimCore] Team Blue specified. Adding offset {red_count} to ID {self.id}")
+                        self.id += red_count
+                    elif self.color == "red":
+                         self.logger.info(f"[SimCore] Team Red specified. ID {self.id} unchanged")
+                         
+                except Exception as e:
+                    self.logger.warning(f"[SimCore] Failed to load match config for team offset: {e}. Using raw ID.")
+
+        self.logger.info(f"[SimCore] Final Robot ID: {self.id}")
         
         # Init ZMQ Client
         from interfaces.sim_client import SimClient
@@ -347,6 +387,17 @@ class SimAgent:
     def stop(self, sleep_time: float = 0) -> None:
         self.current_cmd = [0.0, 0.0, 0.0]
         self._action.cmd_vel(0.0, 0.0, 0.0)
+        
+        # [NEW] Force send zero command to simulator to ensure stop
+        try:
+             if hasattr(self, 'client'):
+                  # Force clean socket first (in case loop was interrupted in bad state)
+                  self.client.force_reset()
+                  self.client.communicate(self.current_cmd, robot_id=self.id)
+        except Exception as e:
+             # Ignore errors during shutdown
+             pass
+             
         time.sleep(sleep_time)
 
     def kick(self, foot=0, death=0) -> None:
@@ -371,10 +422,12 @@ class SimAgent:
     def get_ball_pos(self): return self._vision.get_ball_pos() if self.get_if_ball() else [None, None]
     
     def get_ball_angle(self):
+        """Calculate ball angle. NEW: atan2(Left, Forward)"""
         ball_pos = self.get_ball_pos()
         if ball_pos[0] is None: return None
         if ball_pos[0] == 0 and ball_pos[1] == 0: return None
-        return -math.atan2(ball_pos[0], ball_pos[1])
+        # atan2(Left, Forward) for X-Forward, Y-Left system
+        return math.atan2(ball_pos[1], ball_pos[0])
 
     def get_ball_pos_in_vis(self): return self._vision.get_ball_pos_in_vis()
     def get_ball_pos_in_map(self): return self._vision.get_ball_pos_in_map()
@@ -423,6 +476,8 @@ if __name__ == "__main__":
     parser.add_argument("--simulation", action="store_true", help="Run in Sim Mode (ZMQ, No ROS)")
     parser.add_argument("--ip", default="127.0.0.1", help="Sim IP")
     parser.add_argument("--port", default="5555", help="Sim Port")
+    parser.add_argument("--id", type=int, default=None, help="Robot ID (overrides config)")
+    parser.add_argument("--color", type=str, default=None, choices=["red", "blue"], help="Team color (red/blue). If set, --id is interpreted as player number within team.")
     
     # We need to handle known vs unknown args because ROS args might be present if users mistake
     # But since we control the call:

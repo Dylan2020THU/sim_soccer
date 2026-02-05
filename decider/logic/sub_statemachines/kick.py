@@ -90,11 +90,13 @@ class KickStateMachine:
         self.agent.move_head(inf, inf)
 
         ######################
-        field_length = self.agent.get_config().get("field_size", {}).get(self.agent.league, "kid")[0]
-        if self.agent.get_self_pos()[1] > field_length/2 * self.blind_kick_thres_percent:
-            target_angle_rad = 0.0
+        # NEW Coordinate System: X-Forward, Y-Left
+        field_length = self.agent.get_config().get("field_size", {}).get(self.agent.league, [14.0, 9.0])[0]
+        if self.agent.get_self_pos()[0] > field_length/2 * self.blind_kick_thres_percent:
+            target_angle_rad = 0.0  # Already at goal, kick straight
         else:
-            target_angle_rad = math.atan2(self.agent.get_self_pos()[0], field_length/2 - self.agent.get_self_pos()[1])
+            # Angle to goal at (L/2, 0) from current position
+            target_angle_rad = math.atan2(-self.agent.get_self_pos()[1], field_length/2 - self.agent.get_self_pos()[0])
 
         if aim_theta is not None:
             target_angle_rad = aim_theta / 180 * math.pi

@@ -98,7 +98,8 @@ class GoalkeeperStateMachine:
             return True
         self.logger.debug(f"[GOALKEEPER FSM] Ball position in map: {ball_pos_in_map}")
         safe_area_threshold = self._config.get("safe_area_threshold", -1) + 0.3
-        safe_area = ball_pos_in_map[1] > safe_area_threshold
+        # NEW: X-Forward coordinate system, check X position
+        safe_area = ball_pos_in_map[0] > safe_area_threshold
         return safe_area
     
     def ball_in_dangerous_area(self):
@@ -109,7 +110,8 @@ class GoalkeeperStateMachine:
             return False
         self.logger.debug(f"[GOALKEEPER FSM] Ball position in map: {ball_pos_in_map}")
         safe_area_threshold = self._config.get("safe_area_threshold", -1)
-        dangerous_area = ball_pos_in_map[1] <= safe_area_threshold
+        # NEW: X-Forward coordinate system, check X position
+        dangerous_area = ball_pos_in_map[0] <= safe_area_threshold
         return dangerous_area
     
     def keep_the_goal(self):
@@ -143,8 +145,9 @@ class GoalkeeperStateMachine:
                 theta = -self.rotate_vel_theta if yaw > 0 else self.rotate_vel_theta
             else:
                 theta = 0
-                if abs(self.agent.get_self_pos()[0]) > 0.5:
-                    y_vel = self.walk_vel_y if self.agent.get_self_pos()[0] > 0 else -self.walk_vel_y
+                # NEW: Y-Left coordinate system, Y>0 is left, Y<0 is right
+                if abs(self.agent.get_self_pos()[1]) > 0.5:
+                    y_vel = -self.walk_vel_y if self.agent.get_self_pos()[1] > 0 else self.walk_vel_y
 
         self.agent.cmd_vel(
             x_vel,

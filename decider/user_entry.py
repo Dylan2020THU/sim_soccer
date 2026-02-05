@@ -1,322 +1,429 @@
 # user_entry.py
 #
-#   @description:   Logic entry point for mos-brain decider
-#                   Game logic is separated into game() function, 
-#                   loop() is kept minimal for framework stability.
+#   @description:   Logic entry point for mos-brain decider (Simplified)
+#                   Game logic is separated into game() function.
 #
 
 import time
 import traceback
 import sys
 import os
+import math
+import numpy as np
 
 # Ensure we can find the logic package
 CUR_DIR = os.path.dirname(os.path.abspath(__file__))
 if CUR_DIR not in sys.path:
     sys.path.append(CUR_DIR)
 
-from logic.sub_statemachines import chase_ball, find_ball, kick, go_back_to_field, dribble
+from logic.sub_statemachines import chase_ball, find_ball, go_back_to_field, dribble
 from logic.policy_statemachines import goalkeeper
+
+import csv
+from datetime import datetime
+
+class DataRecorder:
+    def __init__(self, log_dir):
+        self.log_dir = log_dir
+        if not os.path.exists(log_dir):
+            os.makedirs(log_dir)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.filepath = os.path.join(log_dir, f"dribble_debug_{timestamp}.csv")
+        self.file = open(self.filepath, 'w', newline='')
+        self.writer = csv.writer(self.file)
+        self.header_written = False
+        
+    def log(self, data):
+        if not self.header_written:
+            self.writer.writerow(data.keys())
+            self.header_written = True
+        self.writer.writerow(data.values())
+        self.file.flush()
+
+    def close(self):
+        self.file.close()
+
+class AdvancedDribbler:
+    def __init__(self, agent):
+        self.agent = agent
+        self.logger = agent.get_logger().get_child("AdvDribble")
+        
+        # Instrumentation
+        log_dir = "/home/charlie/wj_ws/MOS_sim/mos-brain/debug_logs"
+        print(f"[DEBUG] DataRecorder log_dir: {log_dir}")
+        self.recorder = DataRecorder(log_dir)
+        
+        # Parameters
+        self.bturn_p = 2.0
+        self.side_correction_p = 2.5
+        self.forward_p = 1.0
+        
+        self.setup_dist = 0.40
+        self.dribble_dist = 0.20 # Ball should be slightly in front
+        self.max_fw_vel = 0.8
+        
+        self.field_length = 14.0 # Default M
+        self.field_width = 9.0
+        
+        # Anti-Oscillation
+        self.spread_factor_max = 20.0 # degrees
+        self.spread_factor_min = 5.0 # degrees
+        
+    def get_target_vector(self):
+        """
+        Calculate dribbling direction (Vector Field)
+        COORDINATE SYSTEM (NEW):
+        - Origin: Center of field
+        - X+: Points to Opponent Goal (Front)
+        - Y+: Points to Left side
+        - Field Length: X-axis
+        - Field Width: Y-axis
+        """
+        # 1. Goal Attraction
+        # Goal is at (L/2, 0) - forward on X, center on Y
+        goal_x = self.field_length / 2.0
+        goal_y = 0.0
+        
+        my_pos = self.agent.get_self_pos()
+        if my_pos is None:
+            return np.array([1.0, 0.0]), 0 # Default forward (X+)
+            
+        # Global Vector to Goal
+        g_dx = goal_x - my_pos[0]
+        g_dy = goal_y - my_pos[1]
+        
+        # 2. Boundary Repulsion (Side Lines are at Y = +/- W/2)
+        # If too close to side lines, push towards center (Y=0)
+        dist_to_left = (self.field_width / 2.0) - my_pos[1]   # Y+ is left
+        dist_to_right = my_pos[1] - (-self.field_width / 2.0)  # Y- is right
+        
+        repulsion_y = 0.0
+        margin = 1.0 # Buffer
+        
+        # If close to Left Boundary (Y > 0), push Right (Y-)
+        if dist_to_left < margin:
+            repulsion_y -= (margin - dist_to_left) * 2.0
+            
+        # If close to Right Boundary (Y < 0), push Left (Y+)
+        if dist_to_right < margin:
+            repulsion_y += (margin - dist_to_right) * 2.0
+            
+        # Combine
+        final_dx = g_dx  # Goal attraction provides X component
+        final_dy = g_dy + repulsion_y
+        
+        norm = math.hypot(final_dx, final_dy)
+        if norm < 0.001:
+            return np.array([1.0, 0.0]), 0 # Default forward (X+)
+            
+        target_vec = np.array([final_dx / norm, final_dy / norm])
+        
+        # Zone Safety check for Deadband
+        # If central area (Y close to 0), safe.
+        is_safe = (abs(my_pos[1]) < self.field_width / 3.0)
+        
+        return target_vec, is_safe
+
+    def run(self):
+        if not self.agent.get_if_ball():
+            self.logger.info("Lost ball, stopping.")
+            self.agent.cmd_vel(0,0,0)
+            return
+
+        # 1. Get State
+        # Ball in Robot Body Frame [Forward, Left] (X+前, Y+左)
+        ball_pos = self.agent.get_ball_pos()
+        b_x = ball_pos[0]  # Forward
+        b_y = ball_pos[1]  # Left
+        
+        my_pos = self.agent.get_self_pos()
+        my_yaw = self.agent.get_self_yaw()
+        
+        # [NEW] Ball Behind Check - Turn to face ball first
+        # If ball is behind robot (b_x < threshold), we need to turn around
+        ball_dist = math.hypot(b_x, b_y)
+        ball_angle_to_robot = math.atan2(b_y, b_x)  # Angle from robot forward to ball
+        ball_angle_deg = math.degrees(ball_angle_to_robot)
+        
+        if b_x < 0.05:  # Ball is behind or barely in front
+            # Turn towards the ball instead of dribbling
+            turn_speed = 1.5 * ball_angle_to_robot  # P-control to face ball
+            turn_speed = max(min(turn_speed, 1.5), -1.5)  # Clamp
+            
+            # Also move slightly towards ball if it's far
+            approach_speed = 0.0
+            if ball_dist > 0.3:
+                # Move forward/backward based on ball position
+                # If ball is behind, we should approach after turning
+                approach_speed = 0.3 * b_x / (ball_dist + 0.01)  # Will be negative if ball behind
+                approach_speed = max(min(approach_speed, 0.5), -0.3)
+            
+            self.logger.info(f"[AdvDribble] TURN_TO_BALL: BallAngle={ball_angle_deg:.1f} TurnSpd={turn_speed:.2f}")
+            self.agent.cmd_vel(approach_speed, 0, turn_speed)
+            self.agent.move_head(math.inf, math.inf)
+            
+            # Log for debugging
+            log_data = {
+                "time": time.time(),
+                "rx": my_pos[0] if my_pos is not None else 0,
+                "ry": my_pos[1] if my_pos is not None else 0,
+                "ryaw": my_yaw,
+                "ball_x": b_x,
+                "ball_y": b_y,
+                "t_vec_gx": 0, "t_vec_gy": 0,
+                "t_ang_local": ball_angle_deg,
+                "cmd_x": approach_speed, "cmd_y": 0, "cmd_w": turn_speed,
+                "aligned": 0, "safe_zone": 0,
+                "err_y": 0, "err_x": 0
+            }
+            self.recorder.log(log_data)
+            return  # Exit early, don't do normal dribble logic
+        
+        # Target Vector
+        target_vec_global, is_safe_zone = self.get_target_vector()
+        
+        # [DEBUG] Log coordinate values for diagnosis
+        self.logger.info(f"[COORD] pos={my_pos}, yaw={my_yaw:.1f}, t_vec={target_vec_global}")
+        
+        # Rotate Target to Local Frame
+        yaw_rad = math.radians(my_yaw)
+        # NEW Coordinate System: 
+        # Global: X(Forward), Y(Left)
+        # Body: X(Forward), Y(Left)
+        # Robot Yaw=0 means facing X+ (Forward)
+        # Rotation: v_body = R(-yaw) * v_global
+        # t_local_x = Gx * cos(yaw) + Gy * sin(yaw)
+        # t_local_y = -Gx * sin(yaw) + Gy * cos(yaw)
+        
+        t_local_x = target_vec_global[0] * math.cos(yaw_rad) + target_vec_global[1] * math.sin(yaw_rad)
+        t_local_y = -target_vec_global[0] * math.sin(yaw_rad) + target_vec_global[1] * math.cos(yaw_rad)
+        
+        target_angle_local = math.atan2(t_local_y, t_local_x)
+        target_angle_deg = math.degrees(target_angle_local)
+        
+        # 2. Omnidirectional Control
+        
+        # A. Turn (da)
+        # Minimize angle to target
+        da = self.bturn_p * target_angle_local
+        
+        # [NEW] Dampen Turn when very close to ball to prevent oscillation ("Large angle change" issue)
+        # If b_x is small (e.g. 0.1), simple turning changes relative geometry fast.
+        # Scale down da when close.
+        if my_pos is not None: # Ensure we have data
+             # Use b_x from previous step or estimate? 
+             # Actually we calculated b_x_virt later. 
+             # Let's move da clamping/scaling to AFTER b_x_virt calculation or estimate it here.
+             # Better: Apply scaling at the end of this block or simply use dist to ball.
+             dist_to_ball = math.hypot(b_x, b_y)
+             turn_damp = max(0.4, min(1.0, dist_to_ball / 0.4))
+             da *= turn_damp
+        
+        # B. Orbit/Sway (dy)
+        # We want the ball to be on the "line" to target.
+        # Project Ball Pos onto the Normal of Target Vector?
+        # Simpler: Rotate Ball Pos so that Target Vector lies on X-axis (Virtual Frame)
+        # In Virtual Frame:
+        # Ball Y should be 0.
+        # Ball X should be setup_dist.
+        
+        # Rotation from Robot Body to Virtual Target Frame
+        # rot = -target_angle_local
+        c_r = math.cos(-target_angle_local)
+        s_r = math.sin(-target_angle_local)
+        
+        b_x_virt = b_x * c_r - b_y * s_r
+        b_y_virt = b_x * s_r + b_y * c_r
+        
+        # PID Controls in Virtual Frame
+        # Lateral Error: We want b_y_virt = 0
+        err_y = b_y_virt
+        cmd_y_virt = self.side_correction_p * err_y 
+        
+        # Forward Error: We want b_x_virt = setup_dist (or dribble_dist if aligned)
+        # Adaptive Deadband
+        deadband = self.spread_factor_max if is_safe_zone else self.spread_factor_min
+        # [NEW] Require Ball to be In Front (b_x_virt > 0) to consider Aligned
+        aligned = abs(target_angle_deg) < deadband and abs(err_y) < 0.1 and b_x_virt > 0.1
+        
+        # [NEW] 临门一脚 Mode: Near goal, be more aggressive
+        # Goal is at X = field_length/2, so threshold is ~80% of the way
+        near_goal = my_pos is not None and my_pos[0] > self.field_length * 0.35
+        if near_goal:
+            # Relax alignment requirement
+            aligned = abs(target_angle_deg) < 25.0 and b_x_virt > 0.05
+        
+        # [NEW] Interpolate Target Distance for smooth transition (Creep)
+        target_dist = self.setup_dist
+        if aligned:
+            target_dist = self.dribble_dist
+        elif abs(target_angle_deg) < 25.0:
+             # Interpolate between setup_dist (0.4) and dribble_dist (0.2) based on alignment
+             # 25 deg -> 0.4, 5 deg -> 0.2
+             ratio = (25.0 - abs(target_angle_deg)) / (25.0 - 5.0)
+             ratio = max(0.0, min(1.0, ratio))
+             target_dist = self.setup_dist - ratio * (self.setup_dist - self.dribble_dist)
+
+        err_x = b_x_virt - target_dist
+        
+        # Velocity Damping (Anti-Oscillation)
+        # Don't rush if not aligned
+        forward_factor = 1.0
+        if not aligned:
+            # Dampen based on angle error but allow "creep" if error is not huge
+            angle_err = abs(target_angle_deg)
+            if angle_err < 25.0:
+                # Creep zone: Interpolate 1.0 -> 0.2
+                forward_factor = 1.0 - (angle_err / 25.0) * 0.5 
+            else:
+                forward_factor = 0.0
+        
+        # [NEW] Near goal, always push forward aggressively
+        if near_goal and b_x_virt > 0.05:
+            forward_factor = max(forward_factor, 0.8)  # At least 80% power near goal
+            
+        cmd_x_virt = self.forward_p * err_x * forward_factor
+        
+        # [NEW] Minimum Push Velocity when Aligned
+        # Always maintain minimum forward velocity when aligned (PUSH mode)
+        if aligned:
+             if cmd_x_virt < 0.5:  # Always push forward at min 0.5
+                 cmd_x_virt = 0.5
+        
+        # [NEW] Near goal, even if not aligned, keep pushing forward
+        if near_goal and b_x_virt > 0.1:
+            if cmd_x_virt < 0.4:  # Minimum near-goal push
+                cmd_x_virt = 0.4
+        
+        
+        # [NEW] Clamp Virtual Velocities individually first
+        cmd_x_virt = max(min(cmd_x_virt, self.max_fw_vel), -0.5)
+        # cmd_y_virt is proportional to error, clamping it is key
+        # Using a slightly higher limit for lateral correction if needed, but safe to clamp to max velocity
+        cmd_y_virt = max(min(cmd_y_virt, self.max_fw_vel), -self.max_fw_vel)
+        
+        # Transform Commands back to Body Frame
+        c = math.cos(target_angle_local)
+        s = math.sin(target_angle_local)
+        
+        cmd_x = cmd_x_virt * c - cmd_y_virt * s
+        cmd_y = cmd_x_virt * s + cmd_y_virt * c
+        
+        # [NEW] Global Clamp on Linear Velocity
+        lin_vel_norm = math.hypot(cmd_x, cmd_y)
+        if lin_vel_norm > self.max_fw_vel:
+            scale = self.max_fw_vel / lin_vel_norm
+            cmd_x *= scale
+            cmd_y *= scale
+            
+        # [NEW] Clamp Angular Velocity
+        da = max(min(da, 1.5), -1.5)
+        
+        # LOGGING
+        log_data = {
+            "time": time.time(),
+            "rx": my_pos[0] if my_pos is not None else 0,
+            "ry": my_pos[1] if my_pos is not None else 0,
+            "ryaw": my_yaw,
+            "ball_x": b_x,
+            "ball_y": b_y,
+            "t_vec_gx": target_vec_global[0],
+            "t_vec_gy": target_vec_global[1],
+            "t_ang_local": target_angle_deg,
+            "cmd_x": cmd_x,
+            "cmd_y": cmd_y,
+            "cmd_w": da,
+            "aligned": int(aligned),
+            "safe_zone": int(is_safe_zone),
+            "err_y": err_y,
+            "err_x": err_x
+        }
+        self.recorder.log(log_data)
+        
+        # 3. Final Command
+        self.logger.info(f"[AdvDribble] Safe:{is_safe_zone} Alg:{aligned} T_Ang:{target_angle_deg:.1f} Cmd:({cmd_x:.2f}, {cmd_y:.2f}, {da:.2f})")
+        self.agent.cmd_vel(cmd_x, cmd_y, da)
+        self.agent.move_head(math.inf, math.inf)
 
 def init(agent) -> None:
     agent.get_logger().info("[UserEntry] Initializing Logic...")
     
     # Initialize State Machines
-    # We attach them to agent to persist state
     agent.chase_ball_machine = chase_ball.ChaseBallStateMachine(agent)
     agent.find_ball_machine = find_ball.FindBallStateMachine(agent)
-    agent.kick_machine = kick.KickStateMachine(agent)
     agent.go_back_machine = go_back_to_field.GoBackToFieldStateMachine(agent)
     agent.dribble_machine = dribble.DribbleStateMachine(agent)
-    # Check if goalkeeper config exists, otherwise skip or default
     agent.goalkeeper_machine = goalkeeper.GoalkeeperStateMachine(agent)
+    
+    # Initialize Advanced Dribbler
+    agent.adv_dribbler = AdvancedDribbler(agent)
 
     agent.state_machine_runners = {
         "chase_ball": agent.chase_ball_machine.run,
         "find_ball": agent.find_ball_machine.run,
-        "kick": agent.kick_machine.run, # handle special kick logic if needed
         "go_back_to_field": agent.go_back_machine.run,
         "dribble": agent.dribble_machine.run,
+        "adv_dribble": agent.adv_dribbler.run, # Register new runner
         "stop": agent.stop,
         "goalkeeper": agent.goalkeeper_machine.run,
     }
     
-    # Additional Init
-    agent._last_play_time = time.time()
-    agent.decider_start_time = time.time()
-    agent.penalize_end_time = 0
-    agent.start_walk_into_field_time = agent.get_config().get("start_walk_into_field_time", 3)
+    # Basic Configs
     agent.default_chase_distance = agent.get_config().get("chase",{}).get("default_chase_distance", 0.7)
-    
-    # Kicking params
-    agent.league = agent.get_config().get("league", "kid")
-    agent.dribble_to_kick = agent.get_config().get("dribble_to_kick", {}).get(agent.league, [-2.3, 2.3])
-    agent.kick_to_dribble = agent.get_config().get("kick_to_dribble", {}).get(agent.league, [-1.7, 1.7])
-    agent.attack_method = "dribble"
     
     # Relocalize
     agent.relocate()
 
 def loop(agent) -> None:
-    """
-    Main loop function called by the agent.
-    Kept minimal - delegates to game() for actual logic.
-    Override game() to implement custom behavior.
-    """
     try:
-        # Simply delegate to game logic
         game(agent)
     except Exception as e:
         agent.get_logger().error(f"Error in user_entry loop: {e}")
         traceback.print_exc()
 
 def game(agent) -> None:
+    # # --- Debug Coordinates ---
+    # from debug_coords import debug_coords
+    # debug_coords(agent)
+    
+    # --- Select Test to Run ---
+    # _playing_logic(agent)        # Default: Full Playing Logic
+    _test_adv_dribble(agent)     # TEST ARGUMENT: Using Advanced Dribble
+
+def _playing_logic(agent):
     """
-    Game logic entry point.
+    Simplified playing logic without GameController.
     """
-    # Choose one of the following modes:
-    # _game_logic(agent)           # Full game logic
-    _test_dribble(agent)         # Test dribble
-    # _test_go_back_to_field(agent)# Test go back to field
-    # _test_find_ball(agent)       # Test find ball
-    # _test_state_machines(agent)    # Default: Test basic state machines
-    # _test_basic_interfaces(agent)  # Test basic observation & control
-
-
-# ============================================================================
-# Basic Interface Testing Mode
-# ============================================================================
-
-def _test_basic_interfaces(agent) -> None:
-    """
-    Test basic observation and control interfaces.
-    Cycles through simple control tests while logging all observations.
-    """
-    # Initialize test state
-    if not hasattr(agent, '_basic_test_state'):
-        agent._basic_test_state = {
-            'start_time': time.time(),
-            'phase': 0,
-            'phase_start': time.time(),
-            'log_interval': 1.0,  # Log every 1 second
-            'last_log': 0,
-        }
-        agent.get_logger().info("=" * 60)
-        agent.get_logger().info("[BASIC TEST] Starting Basic Interface Test")
-        agent.get_logger().info("=" * 60)
-    
-    state = agent._basic_test_state
-    current_time = time.time()
-    elapsed = current_time - state['start_time']
-    phase_elapsed = current_time - state['phase_start']
-    
-    # Log observations periodically
-    if current_time - state['last_log'] >= state['log_interval']:
-        _log_observations(agent)
-        state['last_log'] = current_time
-    
-    # Control test phases (each 5 seconds)
-    PHASE_DURATION = 5.0
-    phases = [
-        ("STOP", (0, 0, 0)),
-        ("FORWARD", (0.5, 0, 0)),
-        ("BACKWARD", (-0.5, 0, 0)),
-        ("LEFT", (0, 0.5, 0)),
-        ("RIGHT", (0, -0.5, 0)),
-        ("ROTATE_LEFT", (0, 0, 0.8)),
-        ("ROTATE_RIGHT", (0, 0, -0.8)),
-        ("DIAGONAL", (0.3, 0.2, 0.3)),
-    ]
-    
-    # Switch phase if needed
-    if phase_elapsed >= PHASE_DURATION:
-        state['phase'] = (state['phase'] + 1) % len(phases)
-        state['phase_start'] = current_time
-        phase_name, cmd = phases[state['phase']]
-        agent.get_logger().info(f"[BASIC TEST] Switching to phase: {phase_name} cmd_vel={cmd}")
-    
-    # Execute current phase
-    phase_name, cmd = phases[state['phase']]
-    agent.cmd_vel(cmd[0], cmd[1], cmd[2])
-
-
-def _log_observations(agent) -> None:
-    """Log all observation interface values."""
-    logger = agent.get_logger()
-    
-    # Separator
-    logger.info("-" * 50)
-    logger.info("[OBS] === Observation Report ===")
-    
-    # Self position
-    self_pos = agent.get_self_pos()
-    self_yaw = agent.get_self_yaw()
-    logger.info(f"[OBS] Self Pos: x={self_pos[0]:.3f}, y={self_pos[1]:.3f}")
-    logger.info(f"[OBS] Self Yaw: {self_yaw:.3f} rad ({self_yaw * 180 / 3.14159:.1f} deg)")
-    
-    # Ball detection
-    if_ball = agent.get_if_ball()
-    logger.info(f"[OBS] Ball Detected: {if_ball}")
-    
-    if if_ball:
-        ball_pos = agent.get_ball_pos()
-        ball_angle = agent.get_ball_angle()
-        ball_distance = agent.get_ball_distance()
-        ball_in_map = agent.get_ball_pos_in_map()
-        
-        logger.info(f"[OBS] Ball Pos (relative): x={ball_pos[0]:.3f}, y={ball_pos[1]:.3f}")
-        logger.info(f"[OBS] Ball Angle: {ball_angle:.3f} rad" if ball_angle else "[OBS] Ball Angle: None")
-        logger.info(f"[OBS] Ball Distance: {ball_distance:.3f} m")
-        if ball_in_map is not None:
-            logger.info(f"[OBS] Ball Pos (map): x={ball_in_map[0]:.3f}, y={ball_in_map[1]:.3f}")
-        
-        # Close to ball check
-        close = agent.get_if_close_to_ball()
-        logger.info(f"[OBS] Close to Ball: {close}")
-    
-    # Head/Neck
-    neck = agent.get_neck()
-    head = agent.get_head()
-    logger.info(f"[OBS] Neck: {neck:.3f}, Head: {head:.3f}")
-    
-    # Config check
-    config = agent.get_config()
-    robot_id = config.get("id", "unknown")
-    logger.info(f"[OBS] Robot ID: {robot_id}")
-    
-    logger.info("-" * 50)
-
-# ============================================================================
-# Game Logic Implementation (separated for modularity)
-# ============================================================================
-
-def _game_logic(agent) -> None:
-    """Full game state machine logic - call from game() when needed."""
-    # Access Interfaces
-    gamecontroller = agent.gamecontroller
-    communication = agent.communication
-    
-    state = gamecontroller.game_state
-    secondary_state = gamecontroller.secondary_state
-    can_kick = gamecontroller.can_kick
-    penalty = gamecontroller.penalty
-    
-    agent.get_logger().debug(f"GameState: {state}, Penalty: {penalty}")
-    
-    # 1. Handle Penalty
-    if penalty != 0:
-         agent.get_logger().debug(f"Penalized: {penalty}")
-         agent.stop()
-         agent.penalize_end_time = time.time()
-         return
-
-    # 2. Handle Non-Playing States
-    if state != "STATE_PLAYING":
-        agent._last_play_time = time.time()
-        
-    if state in ['STATE_SET', 'STATE_FINISHED', 'STATE_INITIAL', None]:
-        if state is None:
-            agent.decider_start_time = time.time()
-        agent.stop()
-        return
-        
-    # 3. Handle Ready
-    if state == 'STATE_READY':
-         agent.state_machine_runners['go_back_to_field']()
-         return
-
-    # 4. Handle Playing
-    current_time = time.time()
-    
-    # Simplistic start delay / walk in
-    if current_time - agent.decider_start_time < agent.start_walk_into_field_time:
-        agent.state_machine_runners['go_back_to_field']()
-        return
-    elif current_time - agent.penalize_end_time < agent.start_walk_into_field_time:
-         agent.state_machine_runners['go_back_to_field']()
-         return
-         
-    # Role: Goalkeeper
-    if agent.get_config().get("if_goalkeeper", False):
-         agent.state_machine_runners['goalkeeper']()
-         return
-         
-    # Kick Off handling
-    if gamecontroller.kicking_team != gamecontroller.team and (current_time - agent._last_play_time < 10.0):
-         if not agent.get_if_ball():
-             agent.state_machine_runners['find_ball']()
-         else:
-             agent.state_machine_runners['chase_ball'](distance=2.0)
-         return
-
-    # Cannot kick?
-    if not can_kick:
-         if not agent.get_if_ball():
-             agent.state_machine_runners['find_ball']()
-         else:
-             agent.state_machine_runners['chase_ball'](distance=1.5)
-         return
-         
-    # 5. Autonomous play
-    _handle_autonomous(agent)
-
-def _handle_autonomous(agent):
-    """Fallback autonomous logic if no external command"""
+    # 1. Look for ball
     if not agent.get_if_ball():
         agent.state_machine_runners['find_ball']()
-    elif agent.get_ball_distance() > agent.default_chase_distance:
-        agent.state_machine_runners['chase_ball']()
-    else:
-        # Dribble or Kick logic
-        _handle_kick_logic(agent)
+        return
 
-def _handle_kick_logic(agent):
-    # Determine kick vs dribble based on field position
-    self_pos_y = agent.get_self_pos()[1]
+    # 2. Chase Ball
+    if agent.get_ball_distance() > agent.default_chase_distance:
+        agent.state_machine_runners['chase_ball']()
+        return
     
-    if self_pos_y < agent.dribble_to_kick[0] or self_pos_y > agent.dribble_to_kick[1]:
-        agent.attack_method = "kick"
-    if self_pos_y > agent.kick_to_dribble[0] and self_pos_y < agent.kick_to_dribble[1]:
-        agent.attack_method = "dribble"
-        
-    if agent.attack_method == "dribble":
-        agent.state_machine_runners['dribble']()
-    else:
-        # Kick state machine
-        agent.state_machine_runners['kick']()
+    # 3. Ball Interaction (Close enough) -> NEW Dribble
+    agent.state_machine_runners['adv_dribble']()
 
-
-# ============================================================================
-# State Machine Testing
-# ============================================================================
-
-def _test_state_machines(agent) -> None:
-    """
-    Test state machines: Find Ball -> Chase Ball
-    """
-    if agent.get_if_ball():
-        agent.state_machine_runners['chase_ball']()
-    else:
+def _test_adv_dribble(agent) -> None:
+    if not agent.get_if_ball():
         agent.state_machine_runners['find_ball']()
-
+    else:
+        agent.state_machine_runners['adv_dribble']()
 
 def _test_dribble(agent) -> None:
-    """
-    Test dribble state machine
-    """
-    agent.state_machine_runners['dribble'](aim_yaw=0)
-
-
-def _test_go_back_to_field(agent) -> None:
-    """
-    Test go_back_to_field state machine
-    """
-    agent.state_machine_runners['go_back_to_field']()
-
+    if not agent.get_if_ball():
+        agent.state_machine_runners['find_ball']()
+    else:
+        agent.state_machine_runners['dribble'](aim_yaw=0)
 
 def _test_find_ball(agent) -> None:
-    """
-    Test find_ball state machine
-    """
     agent.state_machine_runners['find_ball']()
 
+def _test_chase_ball(agent) -> None:
+    if not agent.get_if_ball():
+        agent.state_machine_runners['find_ball']()
+    else:
+        agent.state_machine_runners['chase_ball']()

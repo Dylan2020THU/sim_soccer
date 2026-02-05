@@ -156,55 +156,78 @@ class Vision(Node):
             "ball": {"x": float, "y": float, "z": float}
         }
         
-        Coordinate Systems:
+        Coordinate Systems (NEW):
         1. Velocity: X-Forward (No transform needed if Sim matches).
-        2. Relative Obs: X-Right, Y-Forward (implied). 
-           Standard Sim/Robot: X-Forward, Y-Left.
-           Transform: MOS_Rel_X = -STD_Rel_Y, MOS_Rel_Y = STD_Rel_X.
-        3. Global Map: Origin Center, Y-Axis towards Opponent Goal.
-           Assumption: Sim World has X-Axis towards Goal (Standard).
-           Transform: MOS_Map_X = -Sim_Y, MOS_Map_Y = Sim_X.
-           MOS_Map_Theta = Sim_Theta + 90 deg.
+        2. Relative Obs: X-Forward, Y-Left.
+           No transform needed, same as Sim.
+        3. Global Map: Origin Center, X-Axis towards Opponent Goal.
+           No transform needed: MOS_Map = Sim.
         """
-        # Get robot_id from config
+        # Get robot_id and team color from config
         robot_id = self.agent.get_config().get("id", 0)
+        team_color = getattr(self.agent, "color", "red")
         
         # 1. Update Robot Pose - parse from 'robots' array
         robots = state.get("robots", [])
         robot = None
         
-        # Find our robot by index or name
+        # Determine name prefix based on team color
+        # Red team: "robot_rp{id}", Blue team: "robot_bp{id}"
+        team_prefix = "rp" if team_color == "red" else "bp"
+        expected_name = f"robot_{team_prefix}{robot_id}"
+        
+        # DEBUG: Log available robots
+        self.logger.info(f"[Vision] team={team_color}, id={robot_id}, looking for '{expected_name}'")
+        self.logger.info(f"[Vision] Available robots: {[r.get('name') for r in robots]}")
+        
+        # Find our robot by name
         if robots:
-            # Strategy 1: Use robot_id as index
-            if robot_id < len(robots):
-                robot = robots[robot_id]
-            # Strategy 2: Look for standard single-robot name "robot"
-            elif len(robots) == 1:
+            # Strategy 1: Look for exact name match (e.g., "robot_bp0" for blue team id 0)
+            for r in robots:
+                if r.get("name") == expected_name:
+                    robot = r
+                    break
+            
+            # Strategy 2: Fallback - filter by team and use index
+            if robot is None:
+                team_robots = [r for r in robots if r.get("team") == team_color]
+                if robot_id < len(team_robots):
+                    robot = team_robots[robot_id]
+                    self.logger.info(f"[Vision] Fallback: using team_robots[{robot_id}] = {robot.get('name')}")
+            
+            # Strategy 3: Look for standard single-robot name "robot"
+            if robot is None and len(robots) == 1:
                 robot = robots[0]
-            # Strategy 3: Look for name matching "rp{id}" (red player)
-            else:
-                for r in robots:
-                    if r.get("name") == f"rp{robot_id}":
-                        robot = r
-                        break
-                # Fallback to first robot if not found
-                if robot is None and len(robots) > 0:
-                    robot = robots[0]
+                self.logger.warning(f"[Vision] Fallback: only 1 robot, using {robot.get('name')}")
+        
+        self.logger.info(f"[Vision] Selected robot: {robot.get('name') if robot else 'None'}")
         
         if robot:
             # Sim State (Standard X-Goal)
             sim_x = robot.get("x", 0.0)
             sim_y = robot.get("y", 0.0)
             sim_theta = robot.get("theta", 0.0) # radians
-
-            # Transform to MOS Map (Y-Goal)
-            # MOS Y is Goal -> Align with Sim X
-            # MOS X is Right -> Align with Sim -Y (if Sim Y is Left)
-            self.self_pos = np.array([-sim_y, sim_x])
             
-            # Yaw transform
-            # Sim 0 (East/Goal) -> MOS 90 (North/Goal)
-            mos_theta_rad = sim_theta + (math.pi / 2)
+            # [NEW] Coordinate Mirroring for Blue Team
+            # If we are Blue, mirror positions so we "play as if red" from our perspective.
+            # Position mirroring: (-x, -y) rotates the field 180°.
+            # Theta is also rotated by π for consistent heading.
+            team_color = getattr(self.agent, "color", "red")
+            if team_color == "blue":
+                self.logger.debug(f"[Vision] Mirroring coordinates for Blue Team")
+                sim_x = -sim_x
+                sim_y = -sim_y
+                sim_theta = sim_theta + math.pi  # Also rotate heading by 180°
+
+            # Transform to MOS Map (X-Forward, Y-Left)
+            # MOS X is Forward -> Align with Sim X
+            # MOS Y is Left -> Align with Sim Y
+            self.self_pos = np.array([sim_x, sim_y])
+            
+            # Yaw transform: No offset needed
+            # Sim 0 (facing +X/Goal) -> MOS 0 (facing forward/X+)
+            # MOS Yaw: 0=Forward(X+), 90=Left(Y+), -90=Right
+            mos_theta_rad = sim_theta
             self.self_yaw = self.agent.angle_normalize(mos_theta_rad) * 180.0 / math.pi
             
             self.logger.debug(f"[Vision] Updated robot pose: pos={self.self_pos}, yaw={self.self_yaw:.2f}deg")
@@ -217,23 +240,25 @@ class Vision(Node):
             # Sim World Coords
             bx, by = ball.get("x"), ball.get("y")
             
-            # MOS Map Coords
-            mos_bx = -by
-            mos_by = bx
+            # [NEW] Mirror Ball for Blue Team
+            team_color = getattr(self.agent, "color", "red")
+            if team_color == "blue":
+                bx = -bx
+                by = -by
+            
+            # MOS Map Coords (X-Forward, Y-Left)
+            mos_bx = bx
+            mos_by = by
             self._ball_pos_in_map = np.array([mos_bx, mos_by])
 
             # Calculate Relative Position
-            # We want Relative in MOS "Observation Frame" (X-Right).
+            # NEW: X-Forward, Y-Left coordinate system
             # First, get relative in Global MOS Frame
             dx_global = mos_bx - self.self_pos[0]
             dy_global = mos_by - self.self_pos[1]
             
-            # Rotate into Robot Body Frame (MOS Body Frame?)
-            # Wait, "Relative observation X is Right".
-            # Robot Body Frame:
-            # If MOS Map Y is Goal, and Robot faces Goal (Theta=90).
-            # Then Body Forward is +Y direction. Body Right is +X direction.
-            # We need to project dx, dy onto Body Right (X) and Body Forward (Y).
+            # Rotate into Robot Body Frame
+            # Robot Body Frame: X-Forward, Y-Left (same as global)
             
             # Current Yaw (MOS frame)
             yaw_rad = self.self_yaw * math.pi / 180.0
@@ -253,11 +278,14 @@ class Vision(Node):
             forward_comp = dist * math.cos(vec_angle)
             left_comp = dist * math.sin(vec_angle)
             
-            # MOS Relative Definition:
-            # X is Right (= -Left)
-            # Y is Forward? (Implied if X is right and it's 2D)
-            rel_x = -left_comp
-            rel_y = forward_comp
+            # MOS Observation Frame:
+            # X+ = Forward (正前方), Y+ = Left (正左方)
+            # Output: [Forward, Left]
+            rel_x = forward_comp   # Forward
+            rel_y = left_comp      # Left
+            
+            # DEBUG: Log ball relative calculation
+            self.logger.debug(f"[BALL_DEBUG] dx={dx_global:.2f}, dy={dy_global:.2f}, yaw={self.self_yaw:.1f}, vec_ang={math.degrees(vec_angle):.1f}, rel=[{rel_x:.2f}, {rel_y:.2f}]")
             
             self._ball_pos = np.array([rel_x, rel_y])
             self.ball_distance = dist

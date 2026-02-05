@@ -40,6 +40,7 @@ class DribbleStateMachine:
         
         # Limits
         self.max_vel_linear = dribble_cfg.get("max_vel_linear", 1.0)
+        self.min_push_vel = dribble_cfg.get("min_push_vel", 0.5)  # Minimum forward velocity in PUSH mode
         self.orbit_efficiency = dribble_cfg.get("orbit_efficiency", 0.8) # Preference for lateral move when misaligned
         self.stop_threshold_dist = 0.05 # Deadband
         
@@ -55,7 +56,7 @@ class DribbleStateMachine:
             "v_th": deque(maxlen=self.history_len),
             "mode": deque(maxlen=self.history_len)
         }
-        self.plot_interval = 20
+        self.plot_interval = 10  # Plot every 10 steps for faster debugging
         self.step_count = 0
         self.plot_save_path = os.path.join(os.path.dirname(__file__), "../../logs/dribble_debug.png")
         os.makedirs(os.path.dirname(self.plot_save_path), exist_ok=True)
@@ -72,13 +73,13 @@ class DribbleStateMachine:
             return
 
         # 2. Get Inputs
-        # - Ball position in Vision Frame (x=Right, y=Forward)
+        # - Ball position in Vision Frame (X=Forward, Y=Left) - NEW coordinate system
         ball_pos_vis = self.agent.get_ball_pos() 
-        b_right, b_forward = ball_pos_vis[0], ball_pos_vis[1]
+        b_forward, b_left = ball_pos_vis[0], ball_pos_vis[1]
         
-        # - Convert to Control Frame (x=Forward, y=Left)
+        # - Control Frame is same as Vision Frame (X=Forward, Y=Left)
         b_x = b_forward        # Forward
-        b_y = -b_right         # Left = -Right
+        b_y = b_left           # Left
         
         # - Global Yaws
         curr_yaw = self.agent.get_self_yaw()
@@ -127,13 +128,12 @@ class DribbleStateMachine:
         v_theta = self.kp_theta * e_theta
 
         # 7.5. Minimum Velocity Clamp (Aggressive Push)
-        # If in PUSH mode, ensure we have enough "oomph" to move
+        # If in PUSH mode, ALWAYS maintain minimum forward velocity
+        # This prevents oscillation when robot is close to target position
         if mode == "PUSH":
-            min_vel = 0.3
-            if 0 < v_x < min_vel:
-                v_x = min_vel
-            elif -min_vel < v_x < 0:
-                v_x = -min_vel # Should rarely happen in dribble forward, but good for safety
+            # Always push forward at minimum velocity in PUSH mode
+            if v_x < self.min_push_vel:
+                v_x = self.min_push_vel
 
         # 7. Collision Avoidance / Orbit Logic (Refined)
         # If we are in SETUP mode (large angle error), we should prioritize rotating/orbiting 
@@ -246,13 +246,16 @@ class DribbleStateMachine:
         # If get_self_pos fails, it might fluctuate.
         
         try:
-            field_len = self._config.get("field_size", {}).get(self.agent.league, [9, 6])[0]
+            # Reverted to using self.agent.league as SimAgent now exposes it
+            field_len = self._config.get("field_size", {}).get(self.agent.league, [14.0, 9.0])[0]
+            
             goal_x = field_len / 2.0
             my_pos = self.agent.get_self_pos() # [x, y] or None or [None, None]
             
             # Check validity
             if my_pos is not None and len(my_pos) == 2 and my_pos[0] is not None:
-                # Angle from Robot to Goal
+                # NEW: X-Forward coordinate system
+                # Goal is at (L/2, 0), angle from Robot to Goal
                 goal_angle = math.atan2(0 - my_pos[1], goal_x - my_pos[0])
                 return goal_angle
         except Exception as e:

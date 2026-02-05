@@ -1,19 +1,23 @@
 id: 0
 team_id: 12
+color: "red" # red or blue
 
 # kick
 kick_key_is_y: true
 dribble_to_kick: 
-  kid: [-2.3, 2.3]
-  adult: [-3.3, 3.3]
+  S: [-2.3, 2.3]
+  M: [-3.3, 3.3]     # Old 'adult' value (for 14m field)
+  L: [-5.2, 5.2]     # Scaled for 22m field (Ratio ~0.47)
 kick_to_dribble: 
-  kid: [-1.7, 1.7]
-  adult: [-2.7, 2.7]
+  S: [-1.7, 1.7]
+  M: [-2.7, 2.7]     # Old 'adult' value
+  L: [-4.2, 4.2]     # Scaled for 22m field
 
 # field
 field_size:
-  kid: [9, 6] 
-  adult: [14, 9]
+  S: [9.0, 6.0] 
+  M: [14.0, 9.0]
+  L: [22.0, 14.0]
 
 # initial position
 initial_pos:
@@ -21,7 +25,7 @@ initial_pos:
   y: 0
   theta: 0
 
-league: "adult" # "kid"adult
+league: "M" # "S", "M", "L"
 
 # ball
 close_to_ball_threshold: 0.5
@@ -32,7 +36,7 @@ walk_vel_y: 0.5
 walk_vel_theta: 1
 max_walk_vel_x: 1.0
 max_walk_vel_y: 1.0
-max_walk_vel_theta: 1
+max_walk_vel_theta: 1.5
 
 # networking
 server_ip: "192.168.9.105"
@@ -118,6 +122,7 @@ dribble:
   dist_dribble: -0.5    # Distance to push ball (negative means 'inside' ball/forced contact)
   align_threshold_deg: 15.0  # Degrees within which we switch to 'push' mode
   max_vel_linear: 1.0
+  min_push_vel: 0.5           # Minimum forward velocity in PUSH mode
   orbit_efficiency: 0.8 # scaler for tangent velocity when orbiting
   dribble_0_y: 7
   dribble_forward_vel_y: 1 # 0.5

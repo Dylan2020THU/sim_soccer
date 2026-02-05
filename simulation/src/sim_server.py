@@ -239,7 +239,7 @@ def main():
         # Policy paths for each robot type
         policy_paths = {
             "g1": os.path.join(soccerlab_path, "logs/rsl_rl/g1_loco/2026-01-08_16-18-29_cliped_with_lin/exported/policy.pt"),
-            "k1": os.path.join(soccerlab_path, "logs/rsl_rl/k1_loco/2026-02-04_21-27-45_cliped_with_lin/exported/policy.pt"),
+            "k1": os.path.join(soccerlab_path, "logs/rsl_rl/k1_loco/2026-02-05_15-23-29_cliped_with_lin/exported/policy.pt"),
         }
         
         # Load the first available policy (mixed types require multi-policy support in SimBridge)

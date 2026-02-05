@@ -58,6 +58,19 @@ class SimClient:
             self.logger.error(f"Communication error: {e}")
             return None
 
+    def force_reset(self):
+        """Force close and recreate the ZMQ socket. Use this in shutdown/error recovery."""
+        try:
+             self.client.close()
+        except:
+             pass
+        try:
+             self.client = ZMQWrapper(socket_type=zmq.REQ, addr=self.addr)
+             self.client.connect()
+             self.logger.info("Socket force reset complete.")
+        except Exception as e:
+             self.logger.error(f"Failed to reset socket: {e}")
+
     def close(self):
         if self.client:
             self.client.close()
