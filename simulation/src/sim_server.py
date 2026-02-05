@@ -226,18 +226,34 @@ def main():
     if args_cli.checkpoint:
         bridge.load_checkpoint(args_cli.checkpoint)
     else:
-        # Try to find default checkpoint
-        default_ckpt = None
-        if args_cli.robot_type == "g1":
-            #  default_ckpt = os.path.join(soccerlab_path, "data/ckpts/g1/g1_29d_loco_walk.pt")
-            # Use the original model checkpoint (not JIT) - the adaptation system handles dimension conversion
-            default_ckpt = os.path.join(soccerlab_path, "logs/rsl_rl/g1_loco/2026-01-08_16-18-29_cliped_with_lin/exported/policy.pt")
+        # Determine which robot types are used from config
+        teams_cfg = match_config.get("teams", {})
+        robot_types_used = set()
+        for team_name in ["red", "blue"]:
+            team_cfg = teams_cfg.get(team_name, {})
+            robot_type = team_cfg.get("robot_type", "g1")
+            robot_types_used.add(robot_type)
+        
+        logger.info(f"Robot types in use: {robot_types_used}")
+        
+        # Policy paths for each robot type
+        policy_paths = {
+            "g1": os.path.join(soccerlab_path, "logs/rsl_rl/g1_loco/2026-01-08_16-18-29_cliped_with_lin/exported/policy.pt"),
+            "k1": os.path.join(soccerlab_path, "logs/rsl_rl/k1_loco/2026-02-04_21-27-45_cliped_with_lin/exported/policy.pt"),
+        }
+        
+        # Load the first available policy (mixed types require multi-policy support in SimBridge)
+        # For now, prioritize loading based on config - if mixed, load g1 as primary
+        primary_type = list(robot_types_used)[0] if len(robot_types_used) == 1 else "g1"
+        default_ckpt = policy_paths.get(primary_type)
         
         if default_ckpt and os.path.exists(default_ckpt):
-             logger.info(f"Loading default checkpoint for {args_cli.robot_type}: {default_ckpt}")
+             logger.info(f"Loading policy for {primary_type}: {default_ckpt}")
              bridge.load_checkpoint(default_ckpt)
+             if len(robot_types_used) > 1:
+                 logger.warning(f"Mixed robot types detected: {robot_types_used}. Only {primary_type} policy loaded - mixed type inference not yet supported.")
         else:
-             logger.warning("No checkpoint provided via --checkpoint. Env might run with random policy.")
+             logger.warning(f"No checkpoint found for {primary_type}. Env might run with random policy.")
 
     # Initialize ZMQ (Bind once)
     import zmq
@@ -284,14 +300,30 @@ def main():
                 if args_cli.checkpoint:
                     bridge.load_checkpoint(args_cli.checkpoint)
                 else:
-                    default_ckpt = None
-                    if args_cli.robot_type == "g1":
-                        default_ckpt = os.path.join(soccerlab_path, "logs/rsl_rl/g1_loco/2026-01-08_16-18-29_cliped_with_lin/exported/policy.pt")
+                    # Get updated config from env var
+                    updated_config_str = os.environ.get("SOCCER_MATCH_CONFIG", "{}")
+                    updated_config = json.loads(updated_config_str) if updated_config_str else {}
+                    teams_cfg = updated_config.get("teams", {})
+                    
+                    robot_types_used = set()
+                    for team_name in ["red", "blue"]:
+                        team_cfg = teams_cfg.get(team_name, {})
+                        robot_type = team_cfg.get("robot_type", "g1")
+                        robot_types_used.add(robot_type)
+                    
+                    policy_paths = {
+                        "g1": os.path.join(soccerlab_path, "logs/rsl_rl/g1_loco/2026-01-08_16-18-29_cliped_with_lin/exported/policy.pt"),
+                        "k1": os.path.join(soccerlab_path, "logs/rsl_rl/k1_loco/2026-02-04_21-27-45_cliped_with_lin/exported/policy.pt"),
+                    }
+                    
+                    primary_type = list(robot_types_used)[0] if len(robot_types_used) == 1 else "g1"
+                    default_ckpt = policy_paths.get(primary_type)
+                    
                     if default_ckpt and os.path.exists(default_ckpt):
-                        logger.info(f"Loading default checkpoint: {default_ckpt}")
+                        logger.info(f"Loading policy for {primary_type}: {default_ckpt}")
                         bridge.load_checkpoint(default_ckpt)
                     else:
-                        logger.warning("No checkpoint provided.")
+                        logger.warning(f"No checkpoint found for {primary_type}.")
             
             # Save webview wrapper for reuse on restart
             if bridge.webview_wrapper is not None:
@@ -310,20 +342,11 @@ def main():
                     restart_loop_running = False
                     break
                 
-                # CHECK RESTART SIGNAL from Webview
+                # NOTE: restart_match (full sim restart) is disabled - causes freeze
+                # Use set_initial_positions + reset_env instead (teleport approach)
                 if bridge.webview_wrapper and bridge.webview_wrapper.msg_buffer.restart_match:
-                    new_config = bridge.webview_wrapper.msg_buffer.restart_match
                     bridge.webview_wrapper.msg_buffer.restart_match = None
-                    
-                    logger.info(f"Restart Signal Received! Config: {new_config}")
-                    
-                    # Update Env Var
-                    os.environ["SOCCER_MATCH_CONFIG"] = json.dumps(new_config)
-                    
-                    # Trigger restart
-                    restart_needed = True
-                    running = False # Break inner loop
-                    continue
+                    logger.info("Restart Match ignored - use 'Set Spawn Points' + 'Reset' instead")
 
                 # Prepare ZMQ receive
                 try:

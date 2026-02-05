@@ -28,13 +28,16 @@ class SimBridge:
         
         # Override velocity commands to read from self.current_command
         # Iterate over all policy observations to find velocity_commands terms
-        for attr_name in dir(env_cfg.observations.policy):
-             if not attr_name.startswith("_"):
-                  attr_val = getattr(env_cfg.observations.policy, attr_name, None)
-                  if isinstance(attr_val, ObsTerm) and "velocity_commands" in attr_name:
-                       # Create a new ObsTerm that reads from self.current_command
-                       setattr(env_cfg.observations.policy, attr_name, self._create_command_override_obs_term(attr_name))
-                       print(f"[SimBridge] Hooked ZMQ command to {attr_name}")
+        if hasattr(env_cfg.observations, "policy"):
+             for attr_name, attr_val in env_cfg.observations.policy.__dict__.items():
+                 # ConfigClass attributes might be stored differently, but __dict__ usually works
+                 # Check if it looks like a velocity command term
+                 if "velocity_commands" in attr_name and hasattr(attr_val, "func"):
+                      # Bind the function
+                      # We need to wrap it to match signature (env, command_name)
+                      # SimBridge._get_velocity_command has (env, command_name) signature.
+                      attr_val.func = self._get_velocity_command
+                      print(f"[SimBridge] Hooked ZMQ command to {attr_name}")
 
         # Create Environment
         render_mode = "rgb_array" if enable_webview else None
@@ -54,6 +57,7 @@ class SimBridge:
                 existing_webview_wrapper.env = self.env
                 self.env = existing_webview_wrapper
                 self.webview_wrapper = self.env
+                self.webview_wrapper.sim_bridge = self  # Connect for pose sync
                 print(f"[SimBridge] Reusing existing labWebView wrapper")
             else:
                 # Create new webview wrapper
@@ -61,6 +65,7 @@ class SimBridge:
                     from labWebView.wrapper import RenderEnvWrapper
                     self.env = RenderEnvWrapper(self.env)
                     self.webview_wrapper = self.env
+                    self.webview_wrapper.sim_bridge = self  # Connect for pose sync
                     self.env.web_run(port=webview_port)
                     print(f"[SimBridge] labWebView started at http://localhost:{webview_port}")
                 except ImportError as e:
@@ -475,5 +480,71 @@ class SimBridge:
         yaw = torch.atan2(siny_cosp, cosy_cosp)
         return float(yaw)
 
+    def get_all_robot_states(self):
+        """
+        Returns position and yaw for all 20 robots.
+        Format: {robot_name: {x, y, z, yaw, active}}
+        """
+        import json
+        base_env = self.env.unwrapped
+        
+        # Get active counts from config
+        config_str = os.environ.get("SOCCER_MATCH_CONFIG", "{}")
+        config = json.loads(config_str) if config_str else {}
+        red_active = config.get("teams", {}).get("red", {}).get("count", 1)
+        blue_active = config.get("teams", {}).get("blue", {}).get("count", 1)
+        
+        states = {}
+        
+        # Iterate over all possible robot assets
+        for team, prefix, active_count in [("red", "rp", red_active), ("blue", "bp", blue_active)]:
+            for i in range(10):  # MAX_ROBOTS_PER_TEAM
+                asset_name = f"robot_{prefix}{i}"
+                try:
+                    asset = getattr(base_env.scene, asset_name, None)
+                    if asset is None:
+                        continue
+                    
+                    # Get position and orientation
+                    pos = asset.data.root_pos_w[0]  # shape: (3,)
+                    quat = asset.data.root_quat_w[0]  # shape: (4,) - w, x, y, z
+                    
+                    x, y, z = float(pos[0]), float(pos[1]), float(pos[2])
+                    yaw = self._quat_to_yaw(quat)
+                    
+                    # Determine if active (on-field) - off-field robots are at x > 50
+                    is_active = i < active_count and x < 50.0
+                    
+                    states[asset_name] = {
+                        "x": x,
+                        "y": y,
+                        "z": z,
+                        "yaw": yaw,
+                        "active": is_active,
+                        "team": team
+                    }
+                except Exception as e:
+                    # Robot might not exist yet
+                    pass
+        
+        # Also get ball state
+        try:
+            ball = getattr(base_env.scene, "ball", None)
+            if ball is not None:
+                pos = ball.data.root_pos_w[0]
+                states["ball"] = {
+                    "x": float(pos[0]),
+                    "y": float(pos[1]),
+                    "z": float(pos[2]),
+                    "yaw": 0.0,
+                    "active": True,
+                    "team": None
+                }
+        except:
+            pass
+        
+        return states
+
     def close(self):
         self.env.close()
+
