@@ -4,30 +4,33 @@ This repository contains the decision-making framework (`decider`) and simulatio
 
 ## 1. Quick Start
 
-### Prerequisites
+### Step 0: Visualization
+**Web Visualizer**: [http://localhost:5811](http://localhost:5811)
+Open this URL in your browser to view the simulation (running on the server).
+
+### Step 1: Connect to Server
+To run the simulation and experiments, you need to connect to the dedicated server.
+1. **Request Access**: Contact **Luo Shaoyin** to open an account.
+2. **Setup NAT**: Ensure you have the NAT port mapping (IP: `166.111.192.4`, Port: `55222`).
+3. **Connect**:
+   ```bash
+   ssh -p 55222 your_username@166.111.192.4
+   ```
+
+### Step 1: Clone Repository
+Clone the repository using the `sim` branch:
+```bash
+git clone git@git.tsinghua.edu.cn:th-mos/gym/mos-brain.git -b sim
+cd mos-brain
+```
+
+### Step 2: Prerequisites
 The decision code requires the `k1` Conda environment.
 ```bash
 conda activate k1
 ```
 
-### Step 1: Launch Simulation
-Usually, the simulation is already running in a `screen` session named `sim` (or `wj`). You do NOT need to launch it manually in this case.
-
-If you need to view the logs or check if it is running:
-```bash
-screen -r sim
-# Detach with Ctrl+A, D
-```
-
-If it is not running, you can launch it (headless with web viewer enabled):
-```bash
-./simulation/scripts/launch_sim.sh --headless --webview --task Robocup-Soccer
-```
-The simulation provides a **Web Viewer** at:
-- **URL**: `http://localhost:5811` (Port 5811)
-- Use this to visualize the match.
-
-### Step 2: Start Robot Decision
+### Step 3: Start Robot Decision
 
 #### Option A: Start a Single Robot
 To control a specific robot, use the `decider.py` script. You must specify the team color and player ID.
@@ -137,12 +140,21 @@ Source code locations:
 | `agent.kick()` | Perform a kick action. |
 | `agent.head_control(pitch, yaw)` | Control head/neck angles. |
 
-## 5. Development Workflow
+## 5. Development Workflow (Advanced)
 
-1.  **Launch Simulation**: `launch_sim.sh`
-2.  **Edit Strategy**: Modify `decider/user_entry.py`.
-3.  **Test Single Robot**: Run `decider.py` manually to debug.
-    ```bash
-    python3 decider/decider.py --simulation --color red --id 0
-    ```
-4.  **Run Full Match**: Use `start_team.sh` to see multi-agent behavior.
+### Launching Simulation Server
+Usually, the simulation is already running in a `screen` session named `sim` (or `wj`). You do NOT need to launch it manually.
+
+If you need to view the logs or check if it is running:
+```bash
+screen -r sim
+# Detach with Ctrl+A, D
+```
+
+If it is not running (e.g. crashed), you can launch it (headless with web viewer enabled):
+```bash
+./simulation/scripts/launch_sim.sh --headless --webview --task Robocup-Soccer
+```
+The simulation provides a **Web Viewer** at:
+- **URL**: `http://localhost:5811` (Port 5811)
+- Use this to visualize the match.
