@@ -153,7 +153,7 @@ screen -r sim
 
 If it is not running (e.g. crashed), you can launch it (headless with web viewer enabled):
 ```bash
-./simulation/scripts/launch_sim.sh --headless --webview --task Robocup-Soccer
+bash simulation/scripts/launch_sim.sh --headless --webview --task Robocup-Soccer
 ```
 The simulation provides a **Web Viewer** at:
 - **URL**: `http://localhost:5811` (Port 5811)

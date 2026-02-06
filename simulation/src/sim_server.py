@@ -76,7 +76,7 @@ simulation_app = app_launcher.app
 # Now we can import core and other isaac modules
 # Ensure soccerLab is in path (Assuming env var or relative path)
 # We try relative path first: ../../../third_party/soccerLab
-soccerlab_path = os.environ.get("SOCCERLAB_PATH", os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../third_party/soccerLab")))
+soccerlab_path = os.environ.get("SOCCERLAB_PATH", os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../soccerLab")))
 if os.path.exists(soccerlab_path):
     sys.path.append(soccerlab_path)
     # Append source to access soccerTask package
@@ -88,6 +88,9 @@ if os.path.exists(soccerlab_path):
     
     # We also need to add 'source' itself to path to find 'robotlib' (which is checked out to source/robotlib)
     sys.path.append(os.path.join(soccerlab_path, "source"))
+
+    # Add third_party to path to find locomotion_rl_lab
+    sys.path.append(os.path.join(soccerlab_path, "source", "third_party"))
 
     # Also append scripts/rsl_rl inside soccerLab
     sys.path.append(os.path.join(soccerlab_path, "scripts"))
