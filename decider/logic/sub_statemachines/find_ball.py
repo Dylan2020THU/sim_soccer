@@ -1,6 +1,5 @@
 import math
 from transitions import Machine
-from sensor_msgs.msg import JointState
 import time
 import numpy as np
 from math import inf

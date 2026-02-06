@@ -49,7 +49,8 @@ class AdvancedDribbler:
         self.logger = agent.get_logger().get_child("AdvDribble")
         
         # Instrumentation
-        log_dir = "/home/charlie/wj_ws/MOS_sim/mos-brain/debug_logs"
+        # Use project-relative debug_logs directory (parent of `decider`)
+        log_dir = os.path.abspath(os.path.join(CUR_DIR, '..', 'debug_logs'))
         print(f"[DEBUG] DataRecorder log_dir: {log_dir}")
         self.recorder = DataRecorder(log_dir)
         
