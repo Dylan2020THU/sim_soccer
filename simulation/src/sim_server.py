@@ -19,6 +19,7 @@ parser.add_argument("--num_envs", type=int, default=1, help="Number of environme
 parser.add_argument("--checkpoint", type=str, default=None, help="Path to policy checkpoint.")
 parser.add_argument("--port", type=str, default="5555", help="ZMQ Port.")
 parser.add_argument("--webview", action="store_true", default=False, help="Enable web viewer.")
+parser.add_argument("--webview_port", type=int, default=5811, help="Web Viewer Port (default 5811).")
 
 # Unified Soccer Args
 DEFAULT_CONFIG = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config", "match_config.json")
@@ -224,7 +225,7 @@ def main():
         else:
              logger.warning(f"labWebView not found at {labwebview_path}. Webview might fail.")
 
-    bridge = SimBridge(env_cfg, agent_cfg, args_cli.task, device=args_cli.device, enable_webview=webview_enabled, webview_port=5811)
+    bridge = SimBridge(env_cfg, agent_cfg, args_cli.task, device=args_cli.device, enable_webview=webview_enabled, webview_port=args_cli.webview_port)
     
     if args_cli.checkpoint:
         bridge.load_checkpoint(args_cli.checkpoint)
@@ -296,7 +297,7 @@ def main():
 
                 # 2. Initialize Bridge (reuse existing webview wrapper)
                 bridge = SimBridge(env_cfg, agent_cfg, args_cli.task, device=args_cli.device, 
-                                   enable_webview=webview_enabled, webview_port=5811,
+                                   enable_webview=webview_enabled, webview_port=args_cli.webview_port,
                                    existing_webview_wrapper=existing_webview_wrapper)
                 
                 # Load Checkpoint
@@ -359,11 +360,12 @@ def main():
                     cmd = msg.get("cmd", [0.0, 0.0, 0.0])
                     client_ts = msg.get("timestamp", 0)
                     robot_id = msg.get("id", 0)
+                    msg_source = msg.get("source", "unknown")
                     
                     if any(abs(c) > 0.001 for c in cmd):
                         logger.info(f"[SimServer] CMD {robot_id}: {cmd}")
 
-                    bridge.set_command(cmd[0], cmd[1], cmd[2], robot_id=robot_id)
+                    bridge.set_command(cmd[0], cmd[1], cmd[2], robot_id=robot_id, timestamp=client_ts, source=msg_source)
                     
                     # Step
                     t_start = time.time()

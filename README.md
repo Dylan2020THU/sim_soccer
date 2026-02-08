@@ -17,20 +17,47 @@ To run the simulation and experiments, you need to connect to the dedicated serv
    ssh -p 55222 your_username@166.111.192.4
    ```
 
-### Step 1: Clone Repository
+### Step 2: Clone Repository
 Clone the repository using the `sim` branch:
 ```bash
 git clone git@git.tsinghua.edu.cn:th-mos/gym/mos-brain.git -b sim
 cd mos-brain
 ```
 
-### Step 2: Prerequisites
-The decision code requires the `k1` Conda environment.
+### Step 3: Environment Setup
+
+If you need to set up your own environment (instead of using the pre-configured `k1` environment):
+
+#### 3.1 Install Miniconda (Optional)
+If you don't have `conda` installed:
+```bash
+mkdir -p ~/miniconda3
+wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O ~/miniconda3/miniconda.sh
+bash ~/miniconda3/miniconda.sh -b -u -p ~/miniconda3
+rm -rf ~/miniconda3/miniconda.sh
+~/miniconda3/bin/conda init bash
+source ~/.bashrc
+```
+
+#### 3.2 Create Environment
+Create a new environment (e.g., `k1`) with Python 3.8:
+```bash
+conda create -n k1 python=3.8 -y
+conda activate k1
+```
+
+#### 3.3 Install Dependencies
+Install the required packages:
+```bash
+pip install -r decider/requirements.txt
+```
+
+Alternatively, if you are using the provided server account, you can activate the existing environment:
 ```bash
 conda activate k1
 ```
 
-### Step 3: Start Robot Decision
+### Step 4: Start Robot Decision
 
 #### Option A: Start a Single Robot
 To control a specific robot, use the `decider.py` script. You must specify the team color and player ID.
@@ -60,6 +87,17 @@ This script launches each robot in a separate `screen` session with the followin
 - **Restart all robots:** `./decider/scripts/start_team.sh --restart`
 - **Kill all robots:** `./decider/scripts/start_team.sh --kill`
 - **Override robot counts:** `./decider/scripts/start_team.sh --red 2 --blue 1`
+
+**Managing Leftover Processes:**
+If there are uncleared decision processes (e.g. from a previous run), use the following commands:
+1. **Check for running processes:**
+   ```bash
+   ps -ef | grep decider.py | grep -v grep
+   ```
+2. **Force kill all processes:**
+   ```bash
+   sudo pkill -f decider.py
+   ```
 
 ## 2. Configuration
 
@@ -158,3 +196,17 @@ bash simulation/scripts/launch_sim.sh --headless --webview --task Robocup-Soccer
 The simulation provides a **Web Viewer** at:
 - **URL**: `http://localhost:5811` (Port 5811)
 - Use this to visualize the match.
+
+### Multi-Instance Ports and Info
+When running `simulation/scripts/launch_multi_sim.sh`, 6 instances are launched with the following port mappings:
+
+| Instance | ZMQ Port (Control) | WebViewer Port (Browser) | Screen Session Name |
+| :---: | :---: | :---: | :---: |
+| 0 | 5555 | 5811 | sim_instance_0 |
+| 1 | 5556 | 5812 | sim_instance_1 |
+| 2 | 5557 | 5813 | sim_instance_2 |
+| 3 | 5558 | 5814 | sim_instance_3 |
+| 4 | 5559 | 5815 | sim_instance_4 |
+| 5 | 5560 | 5816 | sim_instance_5 |
+
+You can access the web viewer for Instance 0 at [http://localhost:5811](http://localhost:5811), Instance 1 at [http://localhost:5812](http://localhost:5812), and so on.

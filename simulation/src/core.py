@@ -23,6 +23,8 @@ class SimBridge:
         # Fallback for now
         self.current_commands = torch.zeros((1, 3), device=self.device)
         self.num_agents = 1
+        
+        self.last_msg_info = {"timestamp": 0, "id": -1, "source": "unknown"}
 
         self.reset_needed = False
         
@@ -306,8 +308,10 @@ class SimBridge:
              
         return self.current_commands
 
-    def set_command(self, vx, vy, w, robot_id=0):
+    def set_command(self, vx, vy, w, robot_id=0, timestamp=0, source="unknown"):
         """Set velocity command for a specific robot."""
+        self.last_msg_info = {"timestamp": timestamp, "id": robot_id, "source": source}
+        
         if robot_id < 0 or robot_id >= self.num_agents:
             # print(f"[SimBridge Warning] Robot ID {robot_id} out of range [0, {self.num_agents-1}]")
             # Auto-expand if needed? Or just ignore/clamp?
