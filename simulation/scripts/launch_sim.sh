@@ -5,6 +5,7 @@
 SCRIPT_DIR=$(dirname "$0")
 MOS_BRAIN_DIR=$(realpath "$SCRIPT_DIR/../../")
 SOCCERLAB_DIR=$(realpath "$MOS_BRAIN_DIR/../soccerLab")
+ISAACLAB_DIR=$(realpath "$MOS_BRAIN_DIR/../../../IsaacLab")
 
 # Check if SOCCERLAB_PATH is set, else use default
 if [ -z "$SOCCERLAB_PATH" ]; then
@@ -20,7 +21,7 @@ echo "Using SoccerLab at: $SOCCERLAB_PATH"
 # python "$SCRIPT_DIR/sim_server.py" "$@"
 
 # Better approach for Isaac Lab: Use the isaaclab.sh wrapper if it exists and we are on Linux
-ISAACLAB_SH="$SOCCERLAB_PATH/isaaclab.sh"
+ISAACLAB_SH="$ISAACLAB_DIR/isaaclab.sh"
 
 if [ -f "$ISAACLAB_SH" ]; then
     echo "Found isaaclab.sh, using it to launch..."

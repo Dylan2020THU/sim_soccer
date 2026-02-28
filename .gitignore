@@ -156,3 +156,4 @@ config_override.*
 
 *.csv
 *.png
+*.log

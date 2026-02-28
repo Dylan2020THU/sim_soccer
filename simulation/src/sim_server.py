@@ -78,26 +78,27 @@ simulation_app = app_launcher.app
 # Ensure soccerLab is in path (Assuming env var or relative path)
 # We try relative path first: ../../../third_party/soccerLab
 soccerlab_path = os.environ.get("SOCCERLAB_PATH", os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../soccerLab")))
-if os.path.exists(soccerlab_path):
-    sys.path.append(soccerlab_path)
-    # Append source to access soccerTask package
-    # NOTE: The structure is source/soccerTask/soccerTask/__init__.py
-    # If we add .../source, we find source/soccerTask (outer folder with setup.py).
-    # This outer folder is NOT a package (no __init__.py).
-    # We must add .../source/soccerTask to path to import the inner soccerTask package.
-    sys.path.append(os.path.join(soccerlab_path, "source", "soccerTask"))
-    
-    # We also need to add 'source' itself to path to find 'robotlib' (which is checked out to source/robotlib)
-    sys.path.append(os.path.join(soccerlab_path, "source"))
-
-    # Add third_party to path to find locomotion_rl_lab
-    sys.path.append(os.path.join(soccerlab_path, "source", "third_party"))
-
-    # Also append scripts/rsl_rl inside soccerLab
-    sys.path.append(os.path.join(soccerlab_path, "scripts"))
-    sys.path.insert(0, os.path.join(soccerlab_path, "scripts", "rsl_rl"))
-else:
-    print(f"[Warning] SoccerLab path not found at {soccerlab_path}. Relaying on existing python path.")
+    # SIM_SERVER FIX: Use installed packages instead of manual path addition
+    # if os.path.exists(soccerlab_path):
+    #     sys.path.append(soccerlab_path)
+    #     # Append source to access soccerTask package
+    #     # NOTE: The structure is source/soccerTask/soccerTask/__init__.py
+    #     # If we add .../source, we find source/soccerTask (outer folder with setup.py).
+    #     # This outer folder is NOT a package (no __init__.py).
+    #     # We must add .../source/soccerTask to path to import the inner soccerTask package.
+    #     sys.path.append(os.path.join(soccerlab_path, "source", "soccerTask"))
+    #     
+    #     # We also need to add 'source' itself to path to find 'robotlib' (which is checked out to source/robotlib)
+    #     sys.path.append(os.path.join(soccerlab_path, "source"))
+    # 
+    #     # Add third_party to path to find locomotion_rl_lab
+    #     sys.path.append(os.path.join(soccerlab_path, "source", "third_party"))
+    # 
+    #     # Also append scripts/rsl_rl inside soccerLab
+    #     sys.path.append(os.path.join(soccerlab_path, "scripts"))
+    #     sys.path.insert(0, os.path.join(soccerlab_path, "scripts", "rsl_rl"))
+    # else:
+    #     print(f"[Warning] SoccerLab path not found at {soccerlab_path}. Relaying on existing python path.")
 
 # Import cli_args from rsl_rl
 # Note: sys.path includes soccerLab/scripts, so we can import rsl_rl.cli_args or just rsl_rl if scripts is in path?
@@ -208,20 +209,21 @@ def main():
     webview_enabled = args_cli.webview
     if webview_enabled:
         # Try to find labWebView
-        # We assume it is in the same workspace root as mos-brain or passed via env?
-        # Based on file structure: mos-brain is at /home/charlie/wj_ws/MOS_sim/mos-brain
-        # labWebView is at /home/charlie/wj_ws/MOS_sim/labWebView
-        
-        # Get mos-brain root (../../..) from this file
-        mos_brain_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        # One more up for workspace root
-        ws_root = os.path.dirname(mos_brain_root)
-        
-        labwebview_path = os.environ.get("LABWEBVIEW_PATH", os.path.join(ws_root, "labWebView"))
+        # Priority 1: Inside simulation folder (copied version)
+        sim_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        local_labwebview = os.path.join(sim_dir, "labWebView")
+
+        # Priority 2: Environment variable
+        labwebview_path = os.environ.get("LABWEBVIEW_PATH", local_labwebview)
+
+        # Priority 3: Sibling directory (legacy dev mode)
+        if not os.path.exists(labwebview_path):
+             ws_root = os.path.dirname(os.path.dirname(sim_dir))
+             labwebview_path = os.path.join(ws_root, "labWebView")
         
         if os.path.exists(labwebview_path):
              sys.path.insert(0, os.path.join(labwebview_path, "source", "labwebView"))
-             logger.info(f"Added labWebView to path (priority): {labwebview_path}")
+             logger.info(f"Added labWebView to path: {labwebview_path}")
         else:
              logger.warning(f"labWebView not found at {labwebview_path}. Webview might fail.")
 
@@ -243,7 +245,8 @@ def main():
         # Policy paths for each robot type
         policy_paths = {
             "g1": os.path.join(soccerlab_path, "logs/rsl_rl/g1_loco/2026-01-08_16-18-29_cliped_with_lin/exported/policy.pt"),
-            "k1": os.path.join(soccerlab_path, "logs/rsl_rl/k1_loco/2026-02-05_15-23-29_cliped_with_lin/exported/policy.pt"),
+            # "k1": os.path.join(soccerlab_path, "logs/rsl_rl/k1_loco/2026-02-05_15-23-29_cliped_with_lin/exported/policy.pt"),
+            "k1": os.path.join(soccerlab_path, "data/ckpts/k1/model_31900.pt"),
         }
         
         # Load the first available policy (mixed types require multi-policy support in SimBridge)
