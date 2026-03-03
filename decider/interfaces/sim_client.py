@@ -5,10 +5,24 @@ import json
 import logging
 
 # Helper to find zmq_wrapper
-# mos-brain/decider/interfaces -> mos-brain/simulation/src/common
-COMMON_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../simulation/src/common"))
-if COMMON_PATH not in sys.path:
-    sys.path.append(COMMON_PATH)
+# Priority:
+# 1) Explicit env: MOS_BRAIN_MUJOCO_COMMON_PATH
+# 2) Mujoco backend common path
+# 3) Legacy Isaac simulation common path
+COMMON_CANDIDATES = []
+env_common = os.environ.get("MOS_BRAIN_MUJOCO_COMMON_PATH")
+if env_common:
+    COMMON_CANDIDATES.append(os.path.abspath(env_common))
+COMMON_CANDIDATES.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../mujoco/src/common")))
+COMMON_CANDIDATES.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../simulation/src/common")))
+
+COMMON_PATH = None
+for candidate in COMMON_CANDIDATES:
+    if os.path.isdir(candidate):
+        COMMON_PATH = candidate
+        if COMMON_PATH not in sys.path:
+            sys.path.append(COMMON_PATH)
+        break
 
 try:
     from zmq_wrapper import ZMQWrapper

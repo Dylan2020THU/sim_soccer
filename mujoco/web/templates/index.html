@@ -1,0 +1,848 @@
+<!DOCTYPE html>
+<!--
+  Attribution:
+  This file is rewritten/adapted from simulation/labWebView related frontend files.
+  Upstream project: https://github.com/Renforce-Dynamics/labWebView/
+  Upstream license status: no explicit license found at integration time.
+  See: /mujoco/web/templates/THIRD_PARTY_NOTICE.md and /THIRD_PARTY_NOTICES.md
+-->
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gym Environment Render</title>
+    <script src="https://cdn.socket.io/4.3.2/socket.io.min.js"></script>
+</head>
+
+<body>
+    <div class="main-container">
+        <!-- Left Panel: Video -->
+        <div class="left-panel">
+            <div id="video-container">
+                <img id="video" src="" alt="Video Feed" />
+            </div>
+            <div style="text-align: center; color: #555;">
+                <p>Status: <span id="status">Connected</span></p>
+                <p style="font-size: 12px; margin-top: -8px;">
+                    Last Msg: <span id="msg-time">-</span> |
+                    ID: <span id="msg-id">-</span> |
+                    Src: <span id="msg-src">-</span>
+                </p>
+            </div>
+        </div>
+
+        <!-- Right Panel: Controls -->
+        <div class="right-panel">
+
+            <!-- Minimap First for easy access -->
+            <div class="control-section">
+                <h3>Interactive Map</h3>
+                <p style="font-size: 12px; margin-top: -8px;">Drag entities to teleport</p>
+                <div class="control-row" style="justify-content: center;">
+                    <canvas id="minimap" width="400" height="250"></canvas>
+                </div>
+                <div class="control-row" style="font-size: 12px;">
+                    <p><strong>Legend:</strong> ⚪Ball, 🔴Red, 🔵Blue</p>
+                </div>
+                <div class="control-row" style="font-size: 12px; margin-top: 5px;">
+                    <label><input type="checkbox" id="sync-from-sim" checked> Sync positions from sim</label>
+                </div>
+            </div>
+
+            <div class="control-section">
+                <h3>Camera Views</h3>
+                <div class="control-row" style="flex-wrap: wrap;">
+                    <button class="button" onclick="sendCameraPreset('Top')">Top</button>
+                    <button class="button" onclick="sendCameraPreset('Side')">Side</button>
+                    <button class="button" onclick="sendCameraPreset('Diagonal')">Diag</button>
+                    <button class="button" onclick="sendCameraPreset('Goal_Left')">L-Goal</button>
+                    <button class="button" onclick="sendCameraPreset('Goal_Right')">R-Goal</button>
+                </div>
+            </div>
+
+            <div class="control-section">
+                <h3>Match Settings</h3>
+                <div class="control-row">
+                    <label>Red:</label> <span id="red-count" style="font-weight: 600;">-</span>
+                    <label>Blue:</label> <span id="blue-count" style="font-weight: 600;">-</span>
+                    <span style="font-size: 11px; color: #999;">(Read-only)</span>
+                </div>
+                <div class="control-row" style="margin-top: 5px;">
+                    <button class="button" onclick="setSpawnPoints()"
+                        title="Set current map positions as spawn points (will apply on Reset)">Set Spawn
+                        Points</button>
+                    <button class="button" onclick="sendResetEnv()" style="background-color: #28a745;">Reset</button>
+                </div>
+                <div id="spawn-status" style="font-size: 11px; color: #666; margin-top: 5px;"></div>
+                <div id="referee-panel" class="referee-panel" style="display: none;">
+                    <div class="referee-title">Referee Enabled</div>
+                    <div class="referee-row"><span>Play Mode</span><strong id="ref-play-mode">-</strong></div>
+                    <div class="referee-row"><span>Play Time</span><strong id="ref-play-time">-</strong></div>
+                    <div class="referee-row"><span>Score</span><strong id="ref-score">-</strong></div>
+                    <div class="referee-row"><span>Scoring Allowed</span><strong id="ref-score-allowed">-</strong></div>
+                </div>
+                <script>
+                    let savedSpawnPositions = {};
+
+                    function setSpawnPoints() {
+                        savedSpawnPositions = {};
+                        let redCount = 0;
+                        let blueCount = 0;
+                        entities.forEach(ent => {
+                            if (ent.name === 'ball') {
+                                savedSpawnPositions[ent.name] = [ent.x, ent.y, ent.theta || 0];
+                                return;
+                            }
+                            if (ent.active) {
+                                savedSpawnPositions[ent.name] = [ent.x, ent.y, ent.theta || 0];
+                                if (ent.team === 'red') redCount += 1;
+                                if (ent.team === 'blue') blueCount += 1;
+                            }
+                        });
+                        // Send to backend for storage
+                        socket.emit('set_initial_positions', savedSpawnPositions);
+                        document.getElementById('spawn-status').textContent =
+                            `✓ Saved ${Object.keys(savedSpawnPositions).length} spawn points (${redCount}v${blueCount})`;
+                    }
+                </script>
+            </div>
+
+            <div class="control-section">
+                <h3>Velocity Control</h3>
+                <div id="velocity-controls" class="velocity-list"></div>
+                <details class="velocity-info">
+                    <summary>Information</summary>
+                    <div id="velocity-info-content" class="velocity-info-content"></div>
+                </details>
+            </div>
+
+            <div class="control-section">
+                <h3>Manual Camera</h3>
+                <button class="button" onclick="toggleManualCam()"
+                    style="width: 100%; background-color: #6c757d;">Toggle Manual Controls</button>
+                <div id="manual-cam-controls" style="display: none; margin-top: 10px;">
+                    <div class="manual-cam-row">
+                        <label class="manual-cam-label">Pos</label>
+                        <input id="viewer_p_x" placeholder="x" class="input-box manual-cam-input">
+                        <input id="viewer_p_y" placeholder="y" class="input-box manual-cam-input">
+                        <input id="viewer_p_z" placeholder="z" class="input-box manual-cam-input">
+                        <button class="button manual-cam-btn" onclick="sendViewerPoint()">Set Pos</button>
+                    </div>
+                    <div class="manual-cam-row">
+                        <label class="manual-cam-label">Look</label>
+                        <input id="viewer_l_x" placeholder="x" class="input-box manual-cam-input">
+                        <input id="viewer_l_y" placeholder="y" class="input-box manual-cam-input">
+                        <input id="viewer_l_z" placeholder="z" class="input-box manual-cam-input">
+                        <button class="button manual-cam-btn" onclick="sendViewerLookAt()">Set LookAt</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Establish SocketIO connection with the server
+        const socket = io();
+
+        // Listen for 'new_frame' event from the server
+        socket.on('new_frame', (data) => {
+            const img = document.getElementById('video');
+            requestAnimationFrame(() => {
+                img.src = 'data:image/jpeg;base64,' + data.image;
+            });
+        });
+
+        function sendResetEnv() { socket.emit('reset_env'); };
+
+        function readVec3(ids, fallback) {
+            const out = [];
+            for (let i = 0; i < ids.length; i++) {
+                const raw = (document.getElementById(ids[i]).value || '').trim();
+                if (raw === '') {
+                    out.push(fallback[i]);
+                    continue;
+                }
+                const v = parseFloat(raw);
+                if (!Number.isFinite(v)) return null;
+                out.push(v);
+            }
+            return out;
+        }
+
+        function sendViewerPoint() {
+            const point = readVec3(['viewer_p_x', 'viewer_p_y', 'viewer_p_z'], [3.0, 3.0, 1.5]);
+            if (point === null) {
+                alert('Manual camera position must be numeric');
+                return;
+            }
+            socket.emit('set_viewer_point', { point });
+        };
+
+        function sendViewerLookAt() {
+            const point = readVec3(['viewer_l_x', 'viewer_l_y', 'viewer_l_z'], [0.0, 0.0, 0.8]);
+            if (point === null) {
+                alert('Manual camera look-at must be numeric');
+                return;
+            }
+            socket.emit('set_viewer_look_at', { point });
+        }
+
+        function sendCameraPreset(presetName) {
+            console.log("Sending camera preset:", presetName);
+            socket.emit('set_camera_preset', { preset: presetName });
+        }
+
+        function emitRobotVelocity(name, vx, vy, wz) {
+            socket.emit('set_robot_velocity', { name, vx, vy, wz });
+        }
+
+        function setVelocityForRobot(name) {
+            const vxText = (document.getElementById(`vel-${name}-vx`)?.value || '0').trim();
+            const vyText = (document.getElementById(`vel-${name}-vy`)?.value || '0').trim();
+            const wzText = (document.getElementById(`vel-${name}-wz`)?.value || '0').trim();
+            const vx = parseFloat(vxText);
+            const vy = parseFloat(vyText);
+            const wz = parseFloat(wzText);
+            if (!Number.isFinite(vx) || !Number.isFinite(vy) || !Number.isFinite(wz)) {
+                alert(`Velocity input for ${name} must be numeric`);
+                return;
+            }
+            velocityInputDrafts[name] = { vx: vxText, vy: vyText, wz: wzText };
+            emitRobotVelocity(name, vx, vy, wz);
+        }
+
+        function stopVelocityForRobot(name) {
+            velocityInputDrafts[name] = { vx: '0', vy: '0', wz: '0' };
+            const vxEl = document.getElementById(`vel-${name}-vx`);
+            const vyEl = document.getElementById(`vel-${name}-vy`);
+            const wzEl = document.getElementById(`vel-${name}-wz`);
+            if (vxEl) vxEl.value = '0';
+            if (vyEl) vyEl.value = '0';
+            if (wzEl) wzEl.value = '0';
+            emitRobotVelocity(name, 0.0, 0.0, 0.0);
+        }
+
+        function renderVelocityControls() {
+            const container = document.getElementById('velocity-controls');
+            if (!container) return;
+            if (velocityControlsLocked) {
+                return;
+            }
+            const activeRobots = entities
+                .filter(e => e.name !== 'ball' && e.active)
+                .sort((a, b) => a.name.localeCompare(b.name))
+                .map(e => e.name);
+            if (activeRobots.length === 0) {
+                return;
+            }
+            velocityRobotNames = activeRobots;
+            velocityControlsLocked = true;
+            container.innerHTML = '';
+            velocityRobotNames.forEach((name) => {
+                if (!velocityInputDrafts[name]) {
+                    velocityInputDrafts[name] = { vx: '', vy: '', wz: '' };
+                }
+                const draft = velocityInputDrafts[name];
+                const row = document.createElement('div');
+                row.className = 'velocity-row';
+                row.innerHTML = `
+                    <span class="velocity-name">${name}</span>
+                    <input id="vel-${name}-vx" class="input-box velocity-input" placeholder="vx" value="${draft.vx}">
+                    <input id="vel-${name}-vy" class="input-box velocity-input" placeholder="vy" value="${draft.vy}">
+                    <input id="vel-${name}-wz" class="input-box velocity-input" placeholder="ang_z" value="${draft.wz}">
+                    <button class="button velocity-btn-set" onclick="setVelocityForRobot('${name}')">Set</button>
+                    <button class="button velocity-btn-stop" onclick="stopVelocityForRobot('${name}')">Stop</button>
+                `;
+                container.appendChild(row);
+                const vxEl = document.getElementById(`vel-${name}-vx`);
+                const vyEl = document.getElementById(`vel-${name}-vy`);
+                const wzEl = document.getElementById(`vel-${name}-wz`);
+                const onInput = () => {
+                    velocityInputDrafts[name] = {
+                        vx: (vxEl?.value || '').trim(),
+                        vy: (vyEl?.value || '').trim(),
+                        wz: (wzEl?.value || '').trim(),
+                    };
+                };
+                vxEl?.addEventListener('input', onInput);
+                vyEl?.addEventListener('input', onInput);
+                wzEl?.addEventListener('input', onInput);
+            });
+        }
+
+        function fmt3(a, b, c) {
+            return `(${Number(a).toFixed(2)}, ${Number(b).toFixed(2)}, ${Number(c).toFixed(2)})`;
+        }
+
+        function renderVelocityInformation() {
+            const panel = document.getElementById('velocity-info-content');
+            if (!panel) return;
+            const rows = [];
+
+            const robotNames = Object.keys(latestStates)
+                .filter(name => name !== '_last_msg' && name !== 'ball' && latestStates[name] && latestStates[name].active)
+                .sort();
+
+            robotNames.forEach((name) => {
+                const s = latestStates[name];
+                const cmd = s.cmd_vel || [0.0, 0.0, 0.0];
+                rows.push(
+                    `<div class="velocity-info-row"><span class="velocity-info-name">${name}</span><span>cmd_vel ${fmt3(cmd[0], cmd[1], cmd[2])}</span><span>pos ${fmt3(s.x || 0, s.y || 0, s.yaw || 0)}</span></div>`
+                );
+            });
+
+            if (latestStates.ball) {
+                const b = latestStates.ball;
+                rows.push(
+                    `<div class="velocity-info-row"><span class="velocity-info-name">ball</span><span>ball_pos ${fmt3(b.x || 0, b.y || 0, b.z || 0)}</span></div>`
+                );
+            }
+
+            panel.innerHTML = rows.length > 0 ? rows.join('') : '<div class="velocity-empty">No state yet</div>';
+        }
+
+        function toggleManualCam() {
+            const el = document.getElementById('manual-cam-controls');
+            el.style.display = el.style.display === 'none' ? 'block' : 'none';
+        }
+
+        // --- Minimap Logic ---
+        const canvas = document.getElementById('minimap');
+        const ctx = canvas.getContext('2d');
+
+        // Field Settings (Scaled for smaller canvas)
+        const FIELD_WIDTH_M = 16.0;
+        const FIELD_HEIGHT_M = 10.0;
+        const SCALE_X = canvas.width / FIELD_WIDTH_M;
+        const SCALE_Y = canvas.height / FIELD_HEIGHT_M;
+        const CENTER_X = canvas.width / 2;
+        const CENTER_Y = canvas.height / 2;
+
+        // Entities State
+        let entities = [
+            { name: 'ball', x: 0, y: 0, theta: 0, r: 6, color: 'white', team: 'none', active: true }
+        ];
+        let latestStates = {};
+        let latestGameState = null;
+        let velocityInputDrafts = {};
+        let velocityRobotNames = [];
+        let velocityControlsLocked = false;
+
+        function formatPlayMode(mode) {
+            const map = {
+                BeforeKickOff: "Before Kick-Off",
+                KickOff_Left: "Kick-Off Left",
+                KickOff_Right: "Kick-Off Right",
+                PlayOn: "Play On",
+                KickIn_Left: "Throw-In Left",
+                KickIn_Right: "Throw-In Right",
+                corner_kick_left: "Corner Kick Left",
+                corner_kick_right: "Corner Kick Right",
+                goal_kick_left: "Goal Kick Left",
+                goal_kick_right: "Goal Kick Right",
+                Goal_Left: "Goal Left",
+                Goal_Right: "Goal Right",
+                free_kick_left: "Free Kick Left",
+                free_kick_right: "Free Kick Right",
+                GameOver: "Game Over",
+            };
+            return map[mode] || mode || "-";
+        }
+
+        function formatPlayTime(sec) {
+            if (!Number.isFinite(sec)) return "-";
+            const total = Math.max(0, Math.floor(sec));
+            const m = Math.floor(total / 60);
+            const s = total % 60;
+            return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+        }
+
+        function renderRefereeStatus() {
+            const panel = document.getElementById('referee-panel');
+            if (!panel) return;
+            if (!latestGameState) {
+                panel.style.display = 'none';
+                return;
+            }
+            panel.style.display = 'block';
+            document.getElementById('ref-play-mode').textContent = formatPlayMode(latestGameState.play_mode);
+            document.getElementById('ref-play-time').textContent = formatPlayTime(Number(latestGameState.play_time));
+            const left = Number(latestGameState.score_left || 0);
+            const right = Number(latestGameState.score_right || 0);
+            document.getElementById('ref-score').textContent = `${left} : ${right}`;
+            const allowed = (latestGameState.scoring_allowed || 'both').toLowerCase();
+            const allowedText = allowed === 'left' ? 'Left (Red)'
+                : allowed === 'right' ? 'Right (Blue)'
+                : 'Both';
+            document.getElementById('ref-score-allowed').textContent = allowedText;
+        }
+
+        function inferTeamByName(name) {
+            if (name.startsWith('robot_rp')) return 'red';
+            if (name.startsWith('robot_bp')) return 'blue';
+            return 'none';
+        }
+
+        function createOrGetEntity(name, defaults = {}) {
+            let entity = entities.find(e => e.name === name);
+            if (!entity) {
+                entity = {
+                    name,
+                    x: defaults.x || 0,
+                    y: defaults.y || 0,
+                    theta: defaults.theta || 0,
+                    r: name === 'ball' ? 6 : 8,
+                    color: defaults.color || (name.startsWith('robot_rp') ? 'red' : name.startsWith('robot_bp') ? 'blue' : 'white'),
+                    team: defaults.team || inferTeamByName(name),
+                    active: defaults.active !== undefined ? defaults.active : true,
+                };
+                entities.push(entity);
+            }
+            return entity;
+        }
+
+        // Initialize with all fixed IDs (0-13) for stable map entity ids.
+        function initEntities() {
+            entities = [{ name: 'ball', x: 0, y: 0, theta: 0, r: 6, color: 'white', team: 'none', active: true }];
+            for (let i = 0; i < 7; i++) {
+                entities.push({ name: `robot_rp${i}`, x: -2.0, y: i * 0.5 - 1.5, theta: 0, r: 8, color: 'red', team: 'red', active: false });
+                entities.push({ name: `robot_bp${i}`, x: 2.0, y: i * 0.5 - 1.5, theta: 3.14, r: 8, color: 'blue', team: 'blue', active: false });
+            }
+            renderVelocityControls();
+            renderVelocityInformation();
+            drawMinimap();
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            initEntities();
+        });
+
+        let draggingEntity = null;
+        let isRotating = false;
+
+        function toScreen(x_m, y_m) {
+            return { x: CENTER_X + x_m * SCALE_X, y: CENTER_Y - y_m * SCALE_Y };
+        }
+
+        function toSim(screen_x, screen_y) {
+            return { x: (screen_x - CENTER_X) / SCALE_X, y: (CENTER_Y - screen_y) / SCALE_Y };
+        }
+
+        function drawMinimap() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            // Draw field 
+            ctx.strokeStyle = "rgba(255, 255, 255, 0.5)"; ctx.lineWidth = 2;
+            ctx.beginPath(); ctx.moveTo(CENTER_X, 0); ctx.lineTo(CENTER_X, canvas.height); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(0, CENTER_Y); ctx.lineTo(canvas.width, CENTER_Y); ctx.stroke();
+
+            // Draw Entities
+            entities.forEach(ent => {
+                if (!ent.active && ent.name !== 'ball') return;
+                const pos = toScreen(ent.x, ent.y);
+                ctx.fillStyle = ent.color; ctx.beginPath(); ctx.arc(pos.x, pos.y, ent.r, 0, Math.PI * 2); ctx.fill();
+                ctx.strokeStyle = 'black'; ctx.lineWidth = 1; ctx.stroke();
+
+                // Draw Direction Indicator (Arrow)
+                const arrowLen = ent.r + 8;
+                // Minimap coordinate system: Y is up (screen Y is down), passing theta directly.
+                // Wait, screen Y increases downwards. Sim Y increases upwards.
+                // So Sim Theta 0 (East) -> Screen 0. 
+                // Sim Theta PI/2 (North) -> Screen -PI/2?
+                // toSim Y flips sign. 
+                // Let's assume standard math: x = r cos(th), y = r sin(th).
+                // Screen X = C + x*S. Screen Y = C - y*S.
+                const tailX = pos.x;
+                const tailY = pos.y;
+                const headSimX = ent.x + Math.cos(ent.theta) * (arrowLen / SCALE_X);
+                const headSimY = ent.y + Math.sin(ent.theta) * (arrowLen / SCALE_Y);
+                const headPos = toScreen(headSimX, headSimY);
+
+                ctx.strokeStyle = 'yellow'; ctx.lineWidth = 2;
+                ctx.beginPath(); ctx.moveTo(tailX, tailY); ctx.lineTo(headPos.x, headPos.y); ctx.stroke();
+
+                // Label
+                ctx.fillStyle = 'black'; ctx.font = '10px Arial'; ctx.fillText(ent.name, pos.x - 15, pos.y - ent.r - 2);
+            });
+        }
+
+        canvas.addEventListener('mousedown', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+
+            // If shift held, we might be starting rotation? 
+            // Better logic: Click entity -> Drag.
+            // If Shift held while dragging -> Rotate.
+
+            for (let ent of entities) {
+                if (!ent.active && ent.name !== 'ball') continue;
+                const pos = toScreen(ent.x, ent.y);
+                const dist = Math.sqrt((mouseX - pos.x) ** 2 + (mouseY - pos.y) ** 2);
+                if (dist <= ent.r * 2.0) {
+                    draggingEntity = ent;
+                    break;
+                }
+            }
+        });
+
+        canvas.addEventListener('mousemove', (e) => {
+            if (draggingEntity) {
+                const rect = canvas.getBoundingClientRect();
+                const mouseX = e.clientX - rect.left;
+                const mouseY = e.clientY - rect.top;
+
+                if (e.shiftKey) {
+                    // Rotating mode
+                    isRotating = true;
+                    // Calculate angle from entity center to mouse
+                    const entScreen = toScreen(draggingEntity.x, draggingEntity.y);
+                    const dx = mouseX - entScreen.x;
+                    const dy = mouseY - entScreen.y;
+                    // Screen coords: Y down. Sim coords: Y up.
+                    // Angle in screen: atan2(dy, dx).
+                    // We need to map this to Sim Theta.
+                    // dx > 0 -> Sim X > 0. dy > 0 -> Sim Y < 0.
+                    // So sim_dy = -dy.
+                    const sim_dx = dx;
+                    const sim_dy = -dy;
+                    draggingEntity.theta = Math.atan2(sim_dy, sim_dx);
+                } else {
+                    // Translating mode
+                    isRotating = false;
+                    const simPos = toSim(mouseX, mouseY);
+                    draggingEntity.x = simPos.x; draggingEntity.y = simPos.y;
+                }
+                drawMinimap();
+            }
+        });
+
+        canvas.addEventListener('mouseup', (e) => {
+            if (draggingEntity) {
+                console.log(`Teleporting ${draggingEntity.name} to (${draggingEntity.x.toFixed(2)}, ${draggingEntity.y.toFixed(2)}, th=${draggingEntity.theta.toFixed(2)})`);
+                // Omit Z to let backend use default/current height
+                socket.emit('teleport_entity', {
+                    name: draggingEntity.name,
+                    x: draggingEntity.x,
+                    y: draggingEntity.y,
+                    theta: draggingEntity.theta
+                });
+                draggingEntity = null;
+                isRotating = false;
+            }
+        });
+
+        // --- Robot States Sync from Backend ---
+        socket.on('robot_states', function (states) {
+            // Handle Metadata first
+            if (states._last_msg) {
+                const msg = states._last_msg;
+                // Format timestamp to relative or readable time
+                // Assuming timestamp is epoch seconds
+                const date = new Date(msg.timestamp * 1000);
+                const timeStr = date.toLocaleTimeString().split(' ')[0]; // HH:MM:SS
+
+                document.getElementById('msg-time').textContent = timeStr;
+                document.getElementById('msg-id').textContent = msg.id;
+                document.getElementById('msg-src').textContent = msg.source;
+
+                // Cleanup so it doesn't mess with loop
+                delete states._last_msg;
+            }
+            if (states._game) {
+                latestGameState = states._game;
+                delete states._game;
+            } else {
+                latestGameState = null;
+            }
+            renderRefereeStatus();
+            latestStates = states;
+            renderVelocityInformation();
+
+            const syncEnabled = document.getElementById('sync-from-sim').checked;
+            if (!syncEnabled || draggingEntity) return;  // Don't sync while dragging
+
+            let redCount = 0;
+            let blueCount = 0;
+            for (const [name, state] of Object.entries(states)) {
+                // Find or create entity
+                let entity = createOrGetEntity(name, { team: state.team, active: !!state.active });
+                entity.x = state.x;
+                entity.y = state.y;
+                entity.theta = state.yaw || 0;
+                entity.active = !!state.active;
+                entity.team = state.team || entity.team;
+                if (entity.active && entity.team === 'red') redCount += 1;
+                if (entity.active && entity.team === 'blue') blueCount += 1;
+            }
+
+            document.getElementById('red-count').textContent = String(redCount);
+            document.getElementById('blue-count').textContent = String(blueCount);
+            renderVelocityControls();
+            drawMinimap();
+        });
+
+        drawMinimap();
+    </script>
+
+    <style>
+        body,
+        html {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #e9ecef;
+        }
+
+        .main-container {
+            display: flex;
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden;
+        }
+
+        /* Left Panel */
+        .left-panel {
+            flex: 2;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background-color: #000;
+            padding: 10px;
+        }
+
+        #video-container {
+            width: 100%;
+            height: 95%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        #video {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.8);
+        }
+
+        /* Right Panel */
+        .right-panel {
+            flex: 1;
+            min-width: 320px;
+            max-width: 450px;
+            background-color: #f8f9fa;
+            padding: 20px;
+            overflow-y: auto;
+            box-shadow: -2px 0 5px rgba(0, 0, 0, 0.1);
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .control-section {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+        }
+
+        .control-section h3 {
+            margin-top: 0;
+            margin-bottom: 15px;
+            border-bottom: 2px solid #e9ecef;
+            padding-bottom: 5px;
+            color: #495057;
+            font-size: 1.1em;
+        }
+
+        .control-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+
+        .button {
+            flex: 1;
+            padding: 8px 12px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background 0.2s;
+            font-weight: 500;
+            font-size: 0.9em;
+            white-space: nowrap;
+        }
+
+        .button:hover {
+            background-color: #0056b3;
+        }
+
+        .button:active {
+            transform: translateY(1px);
+        }
+
+        .input-box {
+            padding: 6px;
+            border: 1px solid #ced4da;
+            border-radius: 4px;
+            width: 50px;
+            text-align: center;
+        }
+
+        .manual-cam-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+
+        .manual-cam-row:last-child {
+            margin-bottom: 0;
+        }
+
+        .manual-cam-label {
+            min-width: 38px;
+            color: #495057;
+            font-weight: 600;
+            font-size: 0.9em;
+        }
+
+        .manual-cam-input {
+            width: 56px;
+        }
+
+        .manual-cam-btn {
+            flex: 0 0 auto;
+            min-width: 86px;
+        }
+
+        .velocity-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .velocity-row {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex-wrap: nowrap;
+        }
+
+        .velocity-name {
+            min-width: 72px;
+            font-size: 12px;
+            font-weight: 600;
+            color: #495057;
+        }
+
+        .velocity-input {
+            width: 58px;
+        }
+
+        .velocity-btn-set,
+        .velocity-btn-stop {
+            flex: 0 0 auto;
+            min-width: 52px;
+            padding: 6px 8px;
+        }
+
+        .velocity-btn-stop {
+            background-color: #dc3545;
+        }
+
+        .velocity-btn-stop:hover {
+            background-color: #b02a37;
+        }
+
+        .velocity-empty {
+            font-size: 12px;
+            color: #6c757d;
+        }
+
+        .velocity-info {
+            margin-top: 8px;
+            border-top: 1px solid #e9ecef;
+            padding-top: 6px;
+        }
+
+        .velocity-info summary {
+            cursor: pointer;
+            font-size: 13px;
+            color: #495057;
+            font-weight: 600;
+        }
+
+        .velocity-info-content {
+            margin-top: 8px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            max-height: 180px;
+            overflow-y: auto;
+            font-size: 12px;
+            color: #343a40;
+        }
+
+        .velocity-info-row {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            border: 1px solid #e9ecef;
+            border-radius: 6px;
+            padding: 6px 8px;
+            background: #fbfcfd;
+        }
+
+        .velocity-info-name {
+            min-width: 72px;
+            font-weight: 700;
+        }
+
+        .referee-panel {
+            margin-top: 8px;
+            border: 1px solid #e0e3e8;
+            border-radius: 8px;
+            padding: 8px 10px;
+            background: #f7fbff;
+        }
+
+        .referee-title {
+            font-size: 12px;
+            font-weight: 700;
+            color: #0056b3;
+            margin-bottom: 6px;
+        }
+
+        .referee-row {
+            display: flex;
+            justify-content: space-between;
+            font-size: 12px;
+            color: #334155;
+            margin-bottom: 4px;
+        }
+
+        .referee-row:last-child {
+            margin-bottom: 0;
+        }
+
+        canvas {
+            background-color: #4CAF50;
+            border-radius: 4px;
+            border: 2px solid #2e7d32;
+            cursor: crosshair;
+            touch-action: none;
+            width: 100%;
+            max-width: 400px;
+        }
+    </style>
+</body>
+
+</html>

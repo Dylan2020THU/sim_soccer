@@ -5,7 +5,7 @@
 mkdir -p logs
 
 # Activate k1 conda environment
-source ~/anaconda3/etc/profile.d/conda.sh
+# source ~/anaconda3/etc/profile.d/conda.sh
 conda activate k1
 
 # Paths

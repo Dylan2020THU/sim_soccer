@@ -281,9 +281,20 @@ class SimAgent:
             if self.color:
                 import json
                 try:
-                    # Resolve config path relative to this file
-                    # mos-brain/decider/decider.py -> mos-brain/simulation/config/match_config.json
-                    cfg_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../simulation/config/match_config.json"))
+                    # Resolve config path relative to this file.
+                    # Priority: Mujoco backend config -> legacy simulation config.
+                    cfg_candidates = [
+                        os.path.abspath(os.path.join(os.path.dirname(__file__), "../mujoco/config/match_config.json")),
+                        os.path.abspath(os.path.join(os.path.dirname(__file__), "../simulation/config/match_config.json")),
+                    ]
+                    cfg_path = None
+                    for c in cfg_candidates:
+                        if os.path.exists(c):
+                            cfg_path = c
+                            break
+                    if cfg_path is None:
+                        raise FileNotFoundError("No match_config.json found in mujoco/ or simulation/")
+
                     with open(cfg_path, 'r') as f:
                         match_config = json.load(f)
                     
@@ -515,5 +526,4 @@ if __name__ == "__main__":
 
         signal.signal(signal.SIGINT, signal_handler) 
         rclpy.spin(agent)
-
 

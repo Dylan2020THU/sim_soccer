@@ -36,7 +36,7 @@ walk_vel_y: 0.5
 walk_vel_theta: 1
 max_walk_vel_x: 1.0
 max_walk_vel_y: 1.0
-max_walk_vel_theta: 1.5
+max_walk_vel_theta: 0.5
 
 # networking
 server_ip: "192.168.9.105"
@@ -189,4 +189,3 @@ goalkeeper:
   close_to_ball_threshold_x_m: 0.5
   ignore_ball_vel: 5.0
   activate_save: false
-
