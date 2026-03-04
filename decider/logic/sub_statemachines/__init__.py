@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Copyright (c) MOS-Brain Contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 from .chase_ball import ChaseBallStateMachine
 from .find_ball import FindBallStateMachine
 from .go_back_to_field import GoBackToFieldStateMachine

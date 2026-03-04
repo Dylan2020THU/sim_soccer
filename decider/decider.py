@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Copyright (c) MOS-Brain Contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # decider.py
 #
 #   @description : The entry py file for decision-making on clients
@@ -284,8 +287,12 @@ class SimAgent:
                     # Resolve config path relative to this file.
                     # Priority: Mujoco backend config -> legacy simulation config.
                     cfg_candidates = [
-                        os.path.abspath(os.path.join(os.path.dirname(__file__), "../mujoco/config/match_config.json")),
-                        os.path.abspath(os.path.join(os.path.dirname(__file__), "../simulation/config/match_config.json")),
+                        os.path.abspath(
+                            os.path.join(os.path.dirname(__file__), "../simulation/mujoco/assets/config/match_config.json")
+                        ),
+                        os.path.abspath(
+                            os.path.join(os.path.dirname(__file__), "../simulation/isaac_sim/config/match_config.json")
+                        ),
                     ]
                     cfg_path = None
                     for c in cfg_candidates:
@@ -293,7 +300,7 @@ class SimAgent:
                             cfg_path = c
                             break
                     if cfg_path is None:
-                        raise FileNotFoundError("No match_config.json found in mujoco/ or simulation/")
+                        raise FileNotFoundError("No match_config.json found in simulation/mujoco or simulation/isaac_sim")
 
                     with open(cfg_path, 'r') as f:
                         match_config = json.load(f)
@@ -526,4 +533,3 @@ if __name__ == "__main__":
 
         signal.signal(signal.SIGINT, signal_handler) 
         rclpy.spin(agent)
-

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Copyright (c) MOS-Brain Contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # interfaces/vision.py
 #
 #   @description :   The py files to interpret response from perspection

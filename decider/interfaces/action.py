@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Copyright (c) MOS-Brain Contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # interfaces/action.py
 #
 #   @description :   The py files to call actions

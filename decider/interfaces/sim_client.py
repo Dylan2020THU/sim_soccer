@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Copyright (c) MOS-Brain Contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 import sys
 import os
 import time
@@ -13,8 +16,8 @@ COMMON_CANDIDATES = []
 env_common = os.environ.get("MOS_BRAIN_MUJOCO_COMMON_PATH")
 if env_common:
     COMMON_CANDIDATES.append(os.path.abspath(env_common))
-COMMON_CANDIDATES.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../mujoco/src/common")))
-COMMON_CANDIDATES.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../simulation/src/common")))
+COMMON_CANDIDATES.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../simulation/mujoco/src/common")))
+COMMON_CANDIDATES.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../simulation/isaac_sim/src/common")))
 
 COMMON_PATH = None
 for candidate in COMMON_CANDIDATES:

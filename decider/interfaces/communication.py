@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Copyright (c) MOS-Brain Contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # interfaces/communication.py
 #
 #   @description:   Utilities to handle multi-robot communication data from ZMQ

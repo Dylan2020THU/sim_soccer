@@ -159,5 +159,6 @@ config_override.*
 
 MUJOCO_LOG.TXT
 .sim_manager_registry.json
+.labbridge_sim_manager_registry.json
 
 debug_logs/

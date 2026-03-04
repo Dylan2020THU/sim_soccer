@@ -6,14 +6,16 @@
 
 本仓库主要包含：
 - `decider`：决策逻辑与策略开发
-- `mujoco`：迁移自 Isaac Sim 的 Mujoco 仿真环境和仿真环境管理工具
-- `simulation`：[Isaac Sim 仿真环境](./simulation/README.md)
+- `simulation/mujoco`：迁移自 Isaac Sim 的 Mujoco 仿真环境和仿真环境管理工具
+- `simulation/isaac_sim`：[Isaac Sim 仿真环境](./simulation/isaac_sim/README.md)
+- `simulation/labbridge`：独立的 WebView/bridge/sim-manager 模块
 
 Decider 模块说明：[`decider/README.md`](./decider/README.md)
 
 ## 许可证
 
 - 项目主许可证：**GPLv3**（`./LICENSE`）
+- SPDX 许可证标识：`GPL-3.0-or-later`
 - 第三方来源与许可证说明：`./THIRD_PARTY_NOTICES.md`
 
 ## 1. 快速开始
@@ -21,11 +23,12 @@ Decider 模块说明：[`decider/README.md`](./decider/README.md)
 ### Step 1: SSH 登录服务器
 运行仿真和实验前，请先连接指定服务器。
 1. **申请账号**：联系 **Luo Shaoyin** 开通账号。
-2. **确认 NAT**：确认映射信息（IP: `166.111.192.4`, Port: `55222`）。
+2. **确认 NAT**：确认映射信息（IP: `166.111.192.4`, Port: `55422`）。
 3. **连接命令**：
    ```bash
-   ssh -p 55222 your_username@166.111.192.4
+   ssh -p 55422 your_username@166.111.192.4
    ```
+4. **注意**：我们使用了不同的机器并且更改了端口号，您在新机器的账户可能需要重新申请。
 
 ### Step 2: Sim Manager（Mujoco 仿真）
 
@@ -37,7 +40,7 @@ Decider 模块说明：[`decider/README.md`](./decider/README.md)
 - Swagger：`http://127.0.0.1:8000/docs`
 
 给服务器部署者（仿真服务维护者）看的详细启动参数：
-- [Mujoco README: Sim Manager (FastAPI)](./mujoco/README.md#sim-manager-使用说明推荐先看)
+- [Mujoco README: Sim Manager (FastAPI)](./simulation/mujoco/README.md#sim-manager-使用说明推荐先看)
 
 #### Step 2.1: Sim Manager 详细使用
 

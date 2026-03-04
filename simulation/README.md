@@ -1,19 +1,20 @@
-# MOS Brain Simulation
+# simulation
 
-This directory contains the simulation server, configuration, and scripts for the unified soccer environment.
+目录重组后的仿真层入口：
 
-## Directory Structure
-- **config/**: Contains configuration files (e.g., `match_config.json`).
-- **src/**: Contains the Python source code for the simulation bridge and logic.
-- **scripts/**: Contains shell and batch scripts for launching the simulation.
-- **logs/**: Stores output logs from simulation runs.
+- `isaac_sim/`: Isaac Sim 相关代码与脚本
+- `mujoco/`: MuJoCo 仿真与资产
+- `labbridge/`: 独立的 WebView / bridge / sim-manager 模块
 
-## Usage
+常用入口：
 
-To launch the simulation:
 ```bash
-bash simulation/scripts/launch_sim.sh --headless --webview --task Robocup-Soccer
-```
+# Isaac Sim
+bash simulation/isaac_sim/scripts/launch_sim.sh --headless --webview --task Robocup-Soccer
 
-The simulation server will start and listen for ZMQ connections on port 5555.
-Web view is available at http://localhost:5811.
+# MuJoCo
+conda run -n mujoco312 python simulation/mujoco/k1_sim2sim_runner.py --team-size 3
+
+# Sim Manager（推荐）
+conda run -n mujoco312 uvicorn simulation.labbridge.sim_manager:app --host 0.0.0.0 --port 8000
+```

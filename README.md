@@ -4,14 +4,16 @@
 
 This repository mainly includes:
 - `decider`: decision logic and strategy development
-- `mujoco`: Mujoco simulation environment migrated from Isaac Sim, plus simulation management tools
-- `simulation`: [Isaac Sim simulation environment](./simulation/README.md)
+- `simulation/mujoco`: Mujoco simulation environment migrated from Isaac Sim, plus simulation management tools
+- `simulation/isaac_sim`: [Isaac Sim simulation environment](./simulation/isaac_sim/README.md)
+- `simulation/labbridge`: independent WebView/bridge/sim-manager module
 
 Decider module notes: [decider/README.md](./decider/README.md)
 
 ## License
 
 - Main project license: **GPLv3** (`./LICENSE`)
+- SPDX license identifier: `GPL-3.0-or-later`
 - Third-party attribution and license notes: `./THIRD_PARTY_NOTICES.md`
 
 ## 1. Quick Start
@@ -19,11 +21,12 @@ Decider module notes: [decider/README.md](./decider/README.md)
 ### Step 1: SSH Login to Server
 Before running simulation and experiments, connect to the designated server.
 1. **Request an account**: Contact **Luo Shaoyin**.
-2. **Confirm NAT mapping**: IP `166.111.192.4`, Port `55222`.
+2. **Confirm NAT mapping**: IP `166.111.192.4`, Port `55422`.
 3. **Connect**:
    ```bash
-   ssh -p 55222 your_username@166.111.192.4
+   ssh -p 55422 your_username@166.111.192.4
    ```
+4. **Note**: We have changed to different machines and port numbers. You may apply to create an account on the new machine again.
 
 ### Step 2: Sim Manager (Mujoco Simulation)
 
@@ -35,7 +38,7 @@ Pages:
 - Swagger: `http://127.0.0.1:8000/docs`
 
 Detailed startup parameters for server deployers (simulation service maintainers):
-- [Mujoco README: Sim Manager (FastAPI)](./mujoco/README.md#sim-manager-使用说明推荐先看)
+- [Mujoco README: Sim Manager (FastAPI)](./simulation/mujoco/README.md#sim-manager-使用说明推荐先看)
 
 #### Step 2.1: Sim Manager Usage Details
 
