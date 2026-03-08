@@ -75,6 +75,18 @@ Decider 模块说明：[`decider/README.md`](./decider/README.md)
 
 安装决策环境：
 
+如果还没有安装 `conda`，执行以下命令：
+
+```bash
+mkdir -p ~/miniconda3
+wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O ~/miniconda3/miniconda.sh
+bash ~/miniconda3/miniconda.sh -b -u -p ~/miniconda3
+rm -rf ~/miniconda3/miniconda.sh
+~/miniconda3/bin/conda init bash
+source ~/.bashrc
+```
+
+
 ```bash
 cd ./mos-brain
 conda create -n k1 python=3.8 -y

@@ -73,6 +73,16 @@ Tip: Exact decider startup commands can be copied directly from Sim Manager (`Pr
 
 Set up decider environment:
 
+If you don't have `conda` installed:
+```bash
+mkdir -p ~/miniconda3
+wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O ~/miniconda3/miniconda.sh
+bash ~/miniconda3/miniconda.sh -b -u -p ~/miniconda3
+rm -rf ~/miniconda3/miniconda.sh
+~/miniconda3/bin/conda init bash
+source ~/.bashrc
+```
+
 ```bash
 cd ./mos-brain
 conda create -n k1 python=3.8 -y
