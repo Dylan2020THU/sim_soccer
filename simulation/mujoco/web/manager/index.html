@@ -48,6 +48,9 @@
           <label>team_size
             <input id="team_size" type="number" min="0" max="7" value="1" />
           </label>
+          <label>robot_type
+            <select id="robot_type"><option value="k1">k1</option><option value="pi_plus" selected>pi_plus</option></select>
+          </label>
           <label>zmq_port
             <input id="zmq_port" type="number" min="1" max="65535" placeholder="auto (default from 5555)" />
           </label>
@@ -107,7 +110,7 @@
       <h2>Scanned Sim Processes</h2>
       <table class="sim-table">
         <thead>
-          <tr><th>PID</th><th>Managed</th><th>SIM ID</th><th class="port-col">ZMQ Port</th><th class="team-col">Team Size</th><th class="webview-col">WebView</th></tr>
+          <tr><th>PID</th><th>Managed</th><th>SIM ID</th><th>Robot</th><th class="port-col">ZMQ Port</th><th class="team-col">Team Size</th><th class="webview-col">WebView</th></tr>
         </thead>
         <tbody id="sim_table_body"></tbody>
       </table>
@@ -191,6 +194,7 @@
         };
         const payload = {
           team_size: parseInt(document.getElementById("team_size").value || "1"),
+          robot_type: document.getElementById("robot_type").value || "pi_plus",
           zmq_port: parseOptionalInt("zmq_port"),
           webview_port: parseOptionalInt("webview_port"),
           web_fps: parseInt(document.getElementById("web_fps").value || "20"),
@@ -268,8 +272,9 @@
             : "-";
           const zmqPortCell = Number.isFinite(row.zmq_port) ? row.zmq_port : "-";
           const teamSizeCell = Number.isFinite(row.team_size) ? row.team_size : "-";
+          const robotTypeCell = row.robot_type || "pi_plus";
           const tr = document.createElement("tr");
-          tr.innerHTML = `<td>${row.pid}</td><td>${row.managed ? "yes" : "no"}</td><td>${row.sim_id || "-"}</td><td class="port-col">${zmqPortCell}</td><td class="team-col">${teamSizeCell}</td><td class="webview-col">${webviewCell}</td>`;
+          tr.innerHTML = `<td>${row.pid}</td><td>${row.managed ? "yes" : "no"}</td><td>${row.sim_id || "-"}</td><td>${robotTypeCell}</td><td class="port-col">${zmqPortCell}</td><td class="team-col">${teamSizeCell}</td><td class="webview-col">${webviewCell}</td>`;
           tbody.appendChild(tr);
         }
         if (prevSelected !== "" && Array.from(select.options).some(o => o.value === prevSelected)) {

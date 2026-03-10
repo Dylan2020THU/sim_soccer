@@ -149,6 +149,7 @@ class AdvancedDribbler:
         if b_x < 0.05:  # Ball is behind or barely in front
             # Turn towards the ball instead of dribbling
             turn_speed = 1.5 * ball_angle_to_robot  # P-control to face ball
+            turn_speed = max(min(turn_speed, 1.5), -1.5)  # Clamp
             
             # Also move slightly towards ball if it's far
             approach_speed = 0.0
@@ -315,6 +316,9 @@ class AdvancedDribbler:
             scale = self.max_fw_vel / lin_vel_norm
             cmd_x *= scale
             cmd_y *= scale
+
+        # Clamp angular velocity for stable turning
+        da = max(min(da, 1.5), -1.5)
             
         # LOGGING
         log_data = {

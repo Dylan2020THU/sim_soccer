@@ -106,6 +106,16 @@ def _extract_int_arg(cmd: str, key: str) -> int | None:
         return None
 
 
+def _extract_str_arg(cmd: str, key: str) -> str | None:
+    marker = f"{key} "
+    idx = cmd.find(marker)
+    if idx < 0:
+        return None
+    tail = cmd[idx + len(marker) :]
+    token = tail.split(" ", 1)[0].strip()
+    return token or None
+
+
 def _terminate_pid(pid: int, graceful_timeout_sec: float = 5.0) -> bool:
     if not _process_exists(pid):
         return True
@@ -142,6 +152,7 @@ class ManagedSim:
     pid: int
     created_at: float
     team_size: int
+    robot_type: str
     zmq_port: int
     webview_port: int
     args: list[str] = field(default_factory=list)
@@ -156,6 +167,7 @@ class StartSimRequest(BaseModel):
     web_fps: int = Field(default=20, ge=1, le=120)
     web_width: int = Field(default=1280, ge=64, le=8192)
     web_height: int = Field(default=720, ge=64, le=8192)
+    robot_type: str = Field(default="pi_plus", pattern="^(k1|pi_plus)$")
     policy_device: str = Field(default="gpu", pattern="^(cpu|gpu)$")
     policy: str | None = None
     robot_xml: str | None = None
@@ -242,6 +254,8 @@ class SimManager:
         cmd = [
             str(PYTHON_BIN),
             str(self.runner),
+            "--robot-type",
+            req.robot_type,
             "--team-size",
             str(req.team_size),
             "--port",
@@ -281,6 +295,7 @@ class SimManager:
             pid=int(proc.pid),
             created_at=_now(),
             team_size=int(req.team_size),
+            robot_type=str(req.robot_type),
             zmq_port=selected_zmq_port,
             webview_port=selected_webview_port,
             args=cmd,
@@ -308,6 +323,11 @@ class SimManager:
                 )
             row["team_size"] = (
                 int(meta["team_size"]) if meta is not None and "team_size" in meta else _extract_int_arg(row["cmd"], "--team-size")
+            )
+            row["robot_type"] = (
+                str(meta["robot_type"])
+                if meta is not None and "robot_type" in meta
+                else (_extract_str_arg(row["cmd"], "--robot-type") or "pi_plus")
             )
             row["zmq_port"] = (
                 int(meta["zmq_port"]) if meta is not None and "zmq_port" in meta else _extract_int_arg(row["cmd"], "--port")

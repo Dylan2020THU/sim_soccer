@@ -183,11 +183,20 @@ cd ./mos-brain/simulation/mujoco
 conda run -n mujoco312 python k1_sim2sim_runner.py --team-size 3
 ```
 
+- `--robot-type`：机器人类型，可选 `k1`（默认）或 `pi_plus`
+  - `k1` 默认策略：`assets/policies/k1_model_46000.pt`
+  - `pi_plus` 默认策略：`assets/policies/pi_plus_model_40000.pt`
 - `--team-size`：每队机器人数量（红蓝相等），范围 `0..7`，默认 `1`
 - `--use-referee`：启用内置裁判盒（开球/出界/角球/门球/进球/双触球/超时）
   - 定位球阶段仅允许对应球队命令生效（另一方命令会被忽略）
 - WebView 默认 `http://localhost:5811`
 - ZMQ REP 默认 `tcp://*:5555`
+
+示例（启动 `pi_plus`）：
+
+```bash
+conda run -n mujoco312 python k1_sim2sim_runner.py --robot-type pi_plus --team-size 3
+```
 
 ## cmd_vel 输入处理
 

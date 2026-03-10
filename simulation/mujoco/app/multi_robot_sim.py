@@ -4,8 +4,11 @@
 from __future__ import annotations
 
 import json
+import re
+import sys
 import tempfile
 import time
+import types
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,19 +23,15 @@ import zmq
 from .runtime_config import (
     ACTION_CLIP,
     ACTION_SMOOTH_FILTER,
-    CONTROL_DECIMATION,
     DEFAULT_CMD,
     FIXED_ROBOT_ID_TO_NAME,
     FIXED_ROBOT_NAME_TO_ID,
-    K1_ACTION_SCALE,
-    K1_JOINTS_POLICY_ORDER,
     MAX_ROBOTS_PER_TEAM,
-    MOTOR_DAMPING,
-    MOTOR_EFFORT_LIMIT,
-    MOTOR_STIFFNESS,
-    OBS_SCALE,
+    PI_PLUS_KD_POLICY_ORDER,
+    PI_PLUS_KP_POLICY_ORDER,
+    PI_PLUS_ROBOT_TYPE,
     PITCH_SCALE,
-    SIM_DT,
+    RobotRuntimeConfig,
     RuntimeArgs,
     build_action_scale_array,
     parse_param_for_joint_names,
@@ -47,13 +46,32 @@ FIELD_PRESETS = {
     "L": (22.0, 14.0),
 }
 
-RESET_JOINT_POS = {
-    "Left_Shoulder_Roll": -1.3,
-    "Right_Shoulder_Roll": 1.3,
-}
-
 DRAG_RESET_PROTECT_SEC = 0.5
 DRAG_CMD_ZERO_POLICY_FRAMES = 5
+
+
+def _load_checkpoint_compat(path: Path, map_location: torch.device):
+    try:
+        return torch.load(path, map_location=map_location, weights_only=False)
+    except ModuleNotFoundError as e:
+        # pi_plus checkpoints may include rsl_rl.utils.utils.Normalizer in pickle payload.
+        if "rsl_rl" not in str(e):
+            raise
+        rsl_rl_mod = types.ModuleType("rsl_rl")
+        utils_pkg = types.ModuleType("rsl_rl.utils")
+        utils_mod = types.ModuleType("rsl_rl.utils.utils")
+
+        class Normalizer:
+            pass
+
+        Normalizer.__module__ = "rsl_rl.utils.utils"
+        utils_mod.Normalizer = Normalizer
+        rsl_rl_mod.utils = utils_pkg
+        utils_pkg.utils = utils_mod
+        sys.modules.setdefault("rsl_rl", rsl_rl_mod)
+        sys.modules.setdefault("rsl_rl.utils", utils_pkg)
+        sys.modules.setdefault("rsl_rl.utils.utils", utils_mod)
+        return torch.load(path, map_location=map_location, weights_only=False)
 
 
 def _load_field_size_from_match_config(match_config_path: Path | None) -> tuple[float, float] | None:
@@ -169,20 +187,24 @@ def _ensure_offscreen_buffer(root: ET.Element, offwidth: int = 1920, offheight: 
     global_tag.set("offheight", str(max(cur_h, offheight)))
 
 
-def _remove_plane_named_ground(root: ET.Element):
-    worldbody = root.find("worldbody")
-    if worldbody is None:
-        return
-    for child in list(worldbody):
-        if child.tag == "geom" and child.get("type") == "plane" and child.get("name") == "ground":
-            worldbody.remove(child)
+def _remove_all_plane_geoms(root: ET.Element):
+    # Remove every plane geom defined in robot XML so only soccer world pitch remains.
+    for worldbody in list(root.findall("worldbody")):
+        for geom in list(worldbody.iter("geom")):
+            if geom.get("type") != "plane":
+                continue
+            parent = next((p for p in worldbody.iter() if geom in list(p)), None)
+            if parent is not None:
+                parent.remove(geom)
 
 
-def _find_template_robot_body(worldbody: ET.Element) -> ET.Element:
+def _find_template_robot_body(worldbody: ET.Element, base_joint_name: str) -> ET.Element:
     for body in list(worldbody.findall("body")):
-        if body.find("joint[@name='world_joint']") is not None or body.find("freejoint[@name='world_joint']") is not None:
+        if body.find(f"joint[@name='{base_joint_name}']") is not None or body.find(
+            f"freejoint[@name='{base_joint_name}']"
+        ) is not None:
             return body
-    raise RuntimeError("Cannot find template robot body with world_joint in robot XML")
+    raise RuntimeError(f"Cannot find template robot body with base joint '{base_joint_name}' in robot XML")
 
 
 def _prefix_body_tree_names(body: ET.Element, robot_name: str):
@@ -481,6 +503,7 @@ def _build_multi_robot_soccer_scene_xml(
     soccer_world_xml: Path,
     max_red_robots: int,
     max_blue_robots: int,
+    base_joint_name: str,
     pitch_scale: float = PITCH_SCALE,
     target_field_size: tuple[float, float] | None = None,
     goal_cfg: dict[str, float] | None = None,
@@ -495,13 +518,13 @@ def _build_multi_robot_soccer_scene_xml(
         robot_compiler.set("meshdir", meshdir.as_posix())
 
     _ensure_offscreen_buffer(robot_root)
-    _remove_plane_named_ground(robot_root)
+    _remove_all_plane_geoms(robot_root)
 
     worldbody = robot_root.find("worldbody")
     if worldbody is None:
         raise RuntimeError("Robot XML missing worldbody")
 
-    template_body = _find_template_robot_body(worldbody)
+    template_body = _find_template_robot_body(worldbody, base_joint_name=base_joint_name)
     template_actuator = robot_root.find("actuator")
     if template_actuator is None:
         raise RuntimeError("Robot XML missing actuator section")
@@ -516,6 +539,8 @@ def _build_multi_robot_soccer_scene_xml(
         robot_root.remove(sensor)
 
     active_robot_ids: list[int] = []
+    template_pos_vals = [float(v) for v in (template_body.get("pos", "0 0 0").split())]
+    template_spawn_z = template_pos_vals[2] if len(template_pos_vals) >= 3 else 0.0
 
     def add_team(team: str, count: int):
         base_id = 0 if team == "red" else MAX_ROBOTS_PER_TEAM
@@ -525,7 +550,7 @@ def _build_multi_robot_soccer_scene_xml(
             body_copy = deepcopy(template_body)
             _prefix_body_tree_names(body_copy, robot_name)
             x, y, theta = _spawn_xy_theta(team, i, count, target_field_size)
-            body_copy.set("pos", f"{x:.6f} {y:.6f} 0.57")
+            body_copy.set("pos", f"{x:.6f} {y:.6f} {template_spawn_z:.6f}")
             body_copy.set("quat", " ".join(f"{v:.9g}" for v in _quat_from_yaw(theta)))
             worldbody.append(body_copy)
 
@@ -602,18 +627,17 @@ def _build_multi_robot_soccer_scene_xml(
     return xml_path, active_robot_ids
 
 
-class K1Actor(nn.Module):
-    def __init__(self, obs_dim: int = 78, action_dim: int = 22):
+class MLPActor(nn.Module):
+    def __init__(self, layer_dims: list[int]):
         super().__init__()
-        self.actor = nn.Sequential(
-            nn.Linear(obs_dim, 512),
-            nn.ELU(),
-            nn.Linear(512, 256),
-            nn.ELU(),
-            nn.Linear(256, 128),
-            nn.ELU(),
-            nn.Linear(128, action_dim),
-        )
+        if len(layer_dims) < 2:
+            raise ValueError("Actor layer_dims must contain at least input and output sizes")
+        layers: list[nn.Module] = []
+        for i in range(len(layer_dims) - 1):
+            layers.append(nn.Linear(layer_dims[i], layer_dims[i + 1]))
+            if i < len(layer_dims) - 2:
+                layers.append(nn.ELU())
+        self.actor = nn.Sequential(*layers)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.actor(x)
@@ -652,11 +676,14 @@ class RobotSpec:
     kp: np.ndarray
     kd: np.ndarray
     effort: np.ndarray
+    obs_step_dim: int
+    obs_history: np.ndarray
 
 
 class MultiRobotMujocoSim:
     def __init__(self, args: RuntimeArgs):
         self.args = args
+        self.robot_cfg: RobotRuntimeConfig = args.robot_cfg
         self.max_red_robots = args.max_red_robots
         self.max_blue_robots = args.max_blue_robots
         self.active_robot_ids = self._active_ids_from_limits(self.max_red_robots, self.max_blue_robots)
@@ -673,6 +700,7 @@ class MultiRobotMujocoSim:
             args.soccer_world_xml,
             max_red_robots=self.max_red_robots,
             max_blue_robots=self.max_blue_robots,
+            base_joint_name=self.robot_cfg.base_joint_name,
             pitch_scale=PITCH_SCALE,
             target_field_size=field_size,
             goal_cfg=goal_cfg,
@@ -681,16 +709,34 @@ class MultiRobotMujocoSim:
 
         self.model = mujoco.MjModel.from_xml_path(str(scene_xml))
         self.data = mujoco.MjData(self.model)
-        self.model.opt.timestep = SIM_DT
-        self.model.opt.integrator = mujoco.mjtIntegrator.mjINT_RK4
-        self.model.opt.noslip_iterations = 100
-        self.control_decimation = CONTROL_DECIMATION
+        self.sim_dt = float(self.robot_cfg.sim_dt)
+        self.model.opt.timestep = self.sim_dt
+        if self.robot_cfg.robot_type == PI_PLUS_ROBOT_TYPE:
+            # Match sim2sim_pi_plus.py: only timestep is explicitly configured.
+            # Keep integrator/noslip from model XML defaults.
+            pass
+        else:
+            self.model.opt.integrator = mujoco.mjtIntegrator.mjINT_RK4
+            self.model.opt.noslip_iterations = 100
+        self.control_decimation = int(self.robot_cfg.control_decimation)
 
         self.policy_device = self._resolve_policy_device(args.policy_device)
         print(f"[MultiRobotMujocoSim] policy device: {self.policy_device}")
         self.policy = self._load_policy(args.policy)
 
         self.robot_specs: dict[int, RobotSpec] = self._build_robot_specs()
+        if self.robot_specs:
+            sample_spec = next(iter(self.robot_specs.values()))
+            expected_obs_dim = len(sample_spec.obs_history)
+            expected_act_dim = len(sample_spec.last_action)
+            if expected_obs_dim != self._policy_obs_dim:
+                raise RuntimeError(
+                    f"Policy obs dim mismatch: policy={self._policy_obs_dim} robot={expected_obs_dim} type={self.robot_cfg.robot_type}"
+                )
+            if expected_act_dim != self._policy_action_dim:
+                raise RuntimeError(
+                    f"Policy action dim mismatch: policy={self._policy_action_dim} robot={expected_act_dim} type={self.robot_cfg.robot_type}"
+                )
         self.command_buffer: dict[int, np.ndarray] = {
             rid: np.array(DEFAULT_CMD, dtype=np.float32) for rid in FIXED_ROBOT_ID_TO_NAME
         }
@@ -750,21 +796,45 @@ class MultiRobotMujocoSim:
         raise ValueError(f"Unsupported policy device: {requested}")
 
     def _load_policy(self, policy_path: Path):
-        ckpt = torch.load(policy_path, map_location=self.policy_device)
-        state_dict = ckpt["model_state_dict"] if "model_state_dict" in ckpt else ckpt
-        policy = K1Actor(obs_dim=78, action_dim=22).to(self.policy_device)
-        policy.load_state_dict({k: v for k, v in state_dict.items() if k.startswith("actor.")}, strict=True)
+        ckpt = _load_checkpoint_compat(policy_path, map_location=self.policy_device)
+        state_dict = ckpt["model_state_dict"] if isinstance(ckpt, dict) and "model_state_dict" in ckpt else ckpt
+        if not isinstance(state_dict, dict):
+            raise RuntimeError(f"Unsupported policy checkpoint format: {type(state_dict)}")
+        actor_state = {k: v for k, v in state_dict.items() if k.startswith("actor.")}
+        if not actor_state:
+            raise RuntimeError("Checkpoint does not contain actor.* weights")
+
+        actor_layer_dims: list[int] = []
+        actor_weight_keys = sorted(
+            (k for k in actor_state if re.match(r"^actor\.\d+\.weight$", k)),
+            key=lambda s: int(s.split(".")[1]),
+        )
+        for i, wk in enumerate(actor_weight_keys):
+            w = actor_state[wk]
+            out_dim, in_dim = int(w.shape[0]), int(w.shape[1])
+            if i == 0:
+                actor_layer_dims.append(in_dim)
+            actor_layer_dims.append(out_dim)
+
+        self._policy_obs_dim = int(actor_layer_dims[0])
+        self._policy_action_dim = int(actor_layer_dims[-1])
+        policy = MLPActor(layer_dims=actor_layer_dims).to(self.policy_device)
+        policy.load_state_dict(actor_state, strict=True)
         policy.eval()
         return policy
 
     def _build_robot_specs(self) -> dict[int, RobotSpec]:
         specs: dict[int, RobotSpec] = {}
-        action_scale = build_action_scale_array(K1_JOINTS_POLICY_ORDER, K1_ACTION_SCALE)
+        joint_names = self.robot_cfg.policy_joint_names
+        action_scale = build_action_scale_array(joint_names, self.robot_cfg.action_scale_cfg)
+        obs_step_dim = (9 if self.robot_cfg.include_base_lin_vel_obs else 6) + 3 + 3 * len(joint_names)
+        obs_history_len = max(1, int(self.robot_cfg.obs_history_length))
+        obs_dim = obs_step_dim * obs_history_len
 
         for rid in self.active_robot_ids:
             name = FIXED_ROBOT_ID_TO_NAME[rid]
             team = "red" if rid < MAX_ROBOTS_PER_TEAM else "blue"
-            pref_joints = [f"{name}__{j}" for j in K1_JOINTS_POLICY_ORDER]
+            pref_joints = [f"{name}__{j}" for j in joint_names]
             qpos_idx = []
             qvel_idx = []
             for jn in pref_joints:
@@ -781,7 +851,11 @@ class MultiRobotMujocoSim:
                     raise RuntimeError(f"Missing actuator for policy joint: {jn}")
                 act_idx.append(int(aid))
 
-            base_jid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, f"{name}__world_joint")
+            base_jid = mujoco.mj_name2id(
+                self.model,
+                mujoco.mjtObj.mjOBJ_JOINT,
+                f"{name}__{self.robot_cfg.base_joint_name}",
+            )
             if base_jid < 0:
                 raise RuntimeError(f"Missing base freejoint for {name}")
             base_qpos_adr = int(self.model.jnt_qposadr[base_jid])
@@ -789,18 +863,24 @@ class MultiRobotMujocoSim:
 
             init_joint_pos = self.data.qpos[np.asarray(qpos_idx, dtype=np.int32)].astype(np.float32).copy()
             # Enforce requested startup/reset joint pose for every robot.
-            for jname, val in RESET_JOINT_POS.items():
+            for jname, val in self.robot_cfg.reset_joint_pos.items():
                 try:
-                    local_idx = K1_JOINTS_POLICY_ORDER.index(jname)
+                    local_idx = joint_names.index(jname)
                 except ValueError:
                     continue
                 init_joint_pos[local_idx] = float(val)
                 self.data.qpos[qpos_idx[local_idx]] = float(val)
             init_angles = init_joint_pos.copy()
 
-            kp = parse_param_for_joint_names(pref_joints, MOTOR_STIFFNESS)
-            kd = parse_param_for_joint_names(pref_joints, MOTOR_DAMPING)
-            effort = parse_param_for_joint_names(pref_joints, MOTOR_EFFORT_LIMIT)
+            if self.robot_cfg.robot_type == PI_PLUS_ROBOT_TYPE:
+                if len(joint_names) != len(PI_PLUS_KP_POLICY_ORDER) or len(joint_names) != len(PI_PLUS_KD_POLICY_ORDER):
+                    raise RuntimeError("pi_plus kp/kd config length mismatch")
+                kp = np.asarray(PI_PLUS_KP_POLICY_ORDER, dtype=np.float32)
+                kd = np.asarray(PI_PLUS_KD_POLICY_ORDER, dtype=np.float32)
+            else:
+                kp = parse_param_for_joint_names(pref_joints, self.robot_cfg.motor_stiffness)
+                kd = parse_param_for_joint_names(pref_joints, self.robot_cfg.motor_damping)
+            effort = parse_param_for_joint_names(pref_joints, self.robot_cfg.motor_effort_limit)
 
             specs[rid] = RobotSpec(
                 rid=rid,
@@ -817,11 +897,13 @@ class MultiRobotMujocoSim:
                 init_angles=init_angles,
                 filtered_dof_target=init_angles.copy(),
                 target_joint_pos=init_angles.copy(),
-                last_action=np.zeros(len(K1_JOINTS_POLICY_ORDER), dtype=np.float32),
+                last_action=np.zeros(len(joint_names), dtype=np.float32),
                 action_scale=action_scale.copy(),
                 kp=kp,
                 kd=kd,
                 effort=effort,
+                obs_step_dim=obs_step_dim,
+                obs_history=np.zeros((obs_dim,), dtype=np.float32),
             )
         return specs
 
@@ -837,6 +919,11 @@ class MultiRobotMujocoSim:
         vx = float(vx)
         vy = float(vy)
         w = float(w)
+        if self.robot_cfg.cmd_clip is not None:
+            vx_lim, vy_lim, w_lim = self.robot_cfg.cmd_clip
+            vx = float(np.clip(vx, -float(vx_lim), float(vx_lim)))
+            vy = float(np.clip(vy, -float(vy_lim), float(vy_lim)))
+            w = float(np.clip(w, -float(w_lim), float(w_lim)))
         ts = float(timestamp) if timestamp else time.time()
         if ts < self.command_ts[robot_id]:
             return
@@ -857,6 +944,7 @@ class MultiRobotMujocoSim:
         return True
 
     def _obs_for_robot(self, spec: RobotSpec, cmd_override: np.ndarray | None = None) -> np.ndarray:
+        obs_scale = self.robot_cfg.obs_scale
         qpos = self.data.qpos
         qvel = self.data.qvel
 
@@ -865,18 +953,32 @@ class MultiRobotMujocoSim:
         quat = qpos[spec.base_qpos_adr + 3 : spec.base_qpos_adr + 7]
         rot_wb = _quat_to_rot_world_from_body(quat)
 
-        base_lin = (rot_wb.T @ base_lin_world).astype(np.float32) * OBS_SCALE["base_lin_vel"]
-        base_ang = (rot_wb.T @ base_ang_world).astype(np.float32) * OBS_SCALE["base_ang_vel"]
-        gravity = (rot_wb.T @ np.array([0.0, 0.0, -1.0], dtype=np.float32)) * OBS_SCALE["gravity_orientation"]
+        base_lin = (rot_wb.T @ base_lin_world).astype(np.float32) * obs_scale["base_lin_vel"]
+        if self.robot_cfg.robot_type == PI_PLUS_ROBOT_TYPE:
+            # Match sim2sim_pi_plus.py: angular velocity term is consumed directly.
+            base_ang = base_ang_world.astype(np.float32) * obs_scale["base_ang_vel"]
+        else:
+            base_ang = (rot_wb.T @ base_ang_world).astype(np.float32) * obs_scale["base_ang_vel"]
+        gravity = (rot_wb.T @ np.array([0.0, 0.0, -1.0], dtype=np.float32)) * obs_scale["gravity_orientation"]
         cmd_src = self.command_buffer[spec.rid] if cmd_override is None else cmd_override
-        cmd = cmd_src * OBS_SCALE["cmd"]
 
-        joint_pos = (qpos[spec.qpos_idx] - spec.init_joint_pos).astype(np.float32) * OBS_SCALE["joint_pos"]
-        joint_vel = qvel[spec.qvel_idx].astype(np.float32) * OBS_SCALE["joint_vel"]
-        last_action = spec.last_action * OBS_SCALE["last_action"]
+        cmd = cmd_src * obs_scale["cmd"]
 
-        obs = np.concatenate([base_lin, base_ang, gravity, cmd, joint_pos, joint_vel, last_action], axis=-1).astype(np.float32)
-        return np.nan_to_num(obs, nan=0.0, posinf=0.0, neginf=0.0)
+        joint_pos = (qpos[spec.qpos_idx] - spec.init_joint_pos).astype(np.float32) * obs_scale["joint_pos"]
+        joint_vel = qvel[spec.qvel_idx].astype(np.float32) * obs_scale["joint_vel"]
+        last_action = spec.last_action * obs_scale["last_action"]
+
+        obs_terms = [base_ang, gravity, cmd, joint_pos, joint_vel, last_action]
+        if self.robot_cfg.include_base_lin_vel_obs:
+            obs_terms.insert(0, base_lin)
+        obs_step = np.concatenate(obs_terms, axis=-1).astype(np.float32)
+        obs_step = np.nan_to_num(obs_step, nan=0.0, posinf=0.0, neginf=0.0)
+
+        if self.robot_cfg.obs_history_length <= 1:
+            return np.clip(obs_step, -self.robot_cfg.obs_clip, self.robot_cfg.obs_clip)
+        spec.obs_history = np.roll(spec.obs_history, shift=-spec.obs_step_dim)
+        spec.obs_history[-spec.obs_step_dim :] = obs_step
+        return np.clip(spec.obs_history, -self.robot_cfg.obs_clip, self.robot_cfg.obs_clip)
 
     def _compute_targets(self):
         self._policy_step_count += 1
@@ -950,7 +1052,7 @@ class MultiRobotMujocoSim:
             self._compute_targets()
         self._apply_torque()
         mujoco.mj_step(self.model, self.data)
-        self._update_referee(SIM_DT)
+        self._update_referee(self.sim_dt)
         post_hold_changed = self._apply_robot_protection_holds()
         if post_hold_changed:
             mujoco.mj_forward(self.model, self.data)
