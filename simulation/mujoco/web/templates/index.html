@@ -16,6 +16,17 @@
 </head>
 
 <body>
+    <div class="top-scoreboard">
+        <div id="referee-panel" class="referee-panel" style="display: none;">
+            <div class="referee-title">Referee</div>
+            <div class="referee-grid">
+                <div class="referee-row"><span>Mode</span><strong id="ref-play-mode">-</strong></div>
+                <div class="referee-row"><span>Time</span><strong id="ref-play-time">-</strong></div>
+                <div class="referee-row"><span>Score</span><strong id="ref-score">-</strong></div>
+                <div class="referee-row"><span>Scoring</span><strong id="ref-score-allowed">-</strong></div>
+            </div>
+        </div>
+    </div>
     <div class="main-container">
         <!-- Left Panel: Video -->
         <div class="left-panel">
@@ -80,13 +91,6 @@
                         style="background-color: #dc3545; display: none;">Restart Match</button>
                 </div>
                 <div id="spawn-status" style="font-size: 11px; color: #666; margin-top: 5px;"></div>
-                <div id="referee-panel" class="referee-panel" style="display: none;">
-                    <div class="referee-title">Referee Enabled</div>
-                    <div class="referee-row"><span>Play Mode</span><strong id="ref-play-mode">-</strong></div>
-                    <div class="referee-row"><span>Play Time</span><strong id="ref-play-time">-</strong></div>
-                    <div class="referee-row"><span>Score</span><strong id="ref-score">-</strong></div>
-                    <div class="referee-row"><span>Scoring Allowed</span><strong id="ref-score-allowed">-</strong></div>
-                </div>
                 <script>
                     let savedSpawnPositions = {};
 
@@ -604,6 +608,15 @@
             background-color: #e9ecef;
         }
 
+        .top-scoreboard {
+            position: fixed;
+            top: 12px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 1000;
+            pointer-events: none;
+        }
+
         .main-container {
             display: flex;
             height: 100vh;
@@ -816,30 +829,57 @@
         }
 
         .referee-panel {
-            margin-top: 8px;
-            border: 1px solid #e0e3e8;
-            border-radius: 8px;
-            padding: 8px 10px;
-            background: #f7fbff;
+            min-width: 320px;
+            border: 1px solid rgba(15, 23, 42, 0.12);
+            border-radius: 12px;
+            padding: 10px 14px;
+            background: rgba(255, 255, 255, 0.94);
+            backdrop-filter: blur(6px);
+            box-shadow: 0 8px 20px rgba(15, 23, 42, 0.16);
         }
 
         .referee-title {
-            font-size: 12px;
+            text-align: center;
+            font-size: 11px;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
             font-weight: 700;
-            color: #0056b3;
-            margin-bottom: 6px;
+            color: #334155;
+            margin-bottom: 8px;
+        }
+
+        .referee-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 6px 14px;
         }
 
         .referee-row {
             display: flex;
             justify-content: space-between;
-            font-size: 12px;
+            font-size: 13px;
             color: #334155;
-            margin-bottom: 4px;
+            gap: 10px;
         }
 
-        .referee-row:last-child {
-            margin-bottom: 0;
+        .referee-row strong {
+            color: #0f172a;
+        }
+
+        @media (max-width: 900px) {
+            .top-scoreboard {
+                top: 8px;
+            }
+
+            .referee-panel {
+                min-width: 260px;
+                padding: 8px 10px;
+            }
+
+            .referee-grid {
+                grid-template-columns: 1fr;
+                gap: 4px;
+            }
         }
 
         canvas {

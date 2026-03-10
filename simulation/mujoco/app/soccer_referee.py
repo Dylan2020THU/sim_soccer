@@ -239,8 +239,6 @@ class MujocoSoccerReferee:
         if self._is_ball_in_left_goal(ball_x, ball_y, ball_z):
             if pm == PlayMode.GOAL_KICK_LEFT:
                 self.play_on()
-            elif self.team_na_score == "right":
-                self.goal_kick("left")
             else:
                 self.goal("right")
             return
@@ -248,8 +246,6 @@ class MujocoSoccerReferee:
         if self._is_ball_in_right_goal(ball_x, ball_y, ball_z):
             if pm == PlayMode.GOAL_KICK_RIGHT:
                 self.play_on()
-            elif self.team_na_score == "left":
-                self.goal_kick("right")
             else:
                 self.goal("left")
             return
@@ -332,17 +328,11 @@ class MujocoSoccerReferee:
         return out
 
     def game_state_dict(self) -> dict:
-        if self.team_na_score == "left":
-            scoring_allowed = "right"
-        elif self.team_na_score == "right":
-            scoring_allowed = "left"
-        else:
-            scoring_allowed = "both"
         return {
             "play_mode": self.play_mode,
             "play_time": self.play_time,
             "score_left": self.left_score,
             "score_right": self.right_score,
             "team_na_score": self.team_na_score,
-            "scoring_allowed": scoring_allowed,
+            "scoring_allowed": "both",
         }

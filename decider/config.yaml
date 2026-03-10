@@ -31,12 +31,12 @@ league: "M" # "S", "M", "L"
 close_to_ball_threshold: 0.5
 
 # velocities
-walk_vel_x: 0.5
-walk_vel_y: 0.5
+walk_vel_x: 2
+walk_vel_y: 1
 walk_vel_theta: 1
-max_walk_vel_x: 1.0
+max_walk_vel_x: 2.0
 max_walk_vel_y: 1.0
-max_walk_vel_theta: 0.5
+max_walk_vel_theta: 3.0
 
 # networking
 server_ip: "192.168.9.105"
