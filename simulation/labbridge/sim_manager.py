@@ -23,7 +23,7 @@ MODULE_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = MODULE_DIR.parent
 DEFAULT_SIM_ROOT = Path(os.environ.get("LABBRIDGE_SIM_ROOT", str(PROJECT_ROOT / "mujoco"))).resolve()
 DEFAULT_RUNNER = Path(
-    os.environ.get("LABBRIDGE_SIM_RUNNER", str(DEFAULT_SIM_ROOT / "k1_sim2sim_runner.py"))
+    os.environ.get("LABBRIDGE_SIM_RUNNER", str(DEFAULT_SIM_ROOT / "sim2sim_runner.py"))
 ).resolve()
 PYTHON_BIN = Path(os.environ.get("PYTHON", "python"))
 REGISTRY_PATH = Path(
@@ -36,7 +36,7 @@ MANAGER_INDEX_HTML = MANAGER_WEB_DIR / "index.html"
 MANAGER_API_DOCS_HTML = MANAGER_WEB_DIR / "api_docs.html"
 
 SIM_CMD_PATTERNS = [
-    "k1_sim2sim_runner.py",
+    "sim2sim_runner.py",
     " app.runner",
     " app/runner.py",
 ]

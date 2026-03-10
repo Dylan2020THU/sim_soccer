@@ -28,7 +28,7 @@ MANAGER_API_DOCS_HTML = MANAGER_WEB_DIR / "api_docs.html"
 
 
 SIM_CMD_PATTERNS = [
-    "mujoco/k1_sim2sim_runner.py",
+    "mujoco/sim2sim_runner.py",
     " app.runner",
     " app/runner.py",
 ]
@@ -233,7 +233,7 @@ class SimManager:
         )
         cmd = [
             str(PYTHON_BIN),
-            str(MUJOCO_DIR / "k1_sim2sim_runner.py"),
+            str(MUJOCO_DIR / "sim2sim_runner.py"),
             "--robot-type",
             req.robot_type,
             "--team-size",

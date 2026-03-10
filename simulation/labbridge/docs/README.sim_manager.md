@@ -8,7 +8,7 @@
 
 ## 默认行为
 
-- 启动 runner：`<sim_root>/k1_sim2sim_runner.py`
+- 启动 runner：`<sim_root>/sim2sim_runner.py`
 - 默认 `sim_root`：`<project_root>/simulation/mujoco`
 - 默认注册表：`<project_root>/simulation/.labbridge_sim_manager_registry.json`
 
@@ -55,7 +55,7 @@ from simulation.labbridge.sim_manager import SimManager, create_app
 manager = SimManager(
     registry_path=Path("/tmp/labbridge_registry.json"),
     sim_root=Path("/path/to/mos-brain/simulation/mujoco"),
-    runner=Path("/path/to/mos-brain/simulation/mujoco/k1_sim2sim_runner.py"),
+    runner=Path("/path/to/mos-brain/simulation/mujoco/sim2sim_runner.py"),
     manager_index_html=Path("/path/to/mos-brain/simulation/mujoco/web/manager/index.html"),
     manager_api_docs_html=Path("/path/to/mos-brain/simulation/mujoco/web/manager/api_docs.html"),
 )

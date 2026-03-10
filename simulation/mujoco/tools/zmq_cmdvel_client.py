@@ -10,7 +10,7 @@ import zmq
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Send cmdvel to k1_sim2sim_runner ZMQ REP server")
+    parser = argparse.ArgumentParser(description="Send cmdvel to sim2sim_runner ZMQ REP server")
     parser.add_argument("--host", default="127.0.0.1", help="ZMQ server host")
     parser.add_argument("--port", type=int, default=5555, help="ZMQ server port")
     parser.add_argument("--vx", type=float, default=0.2, help="Linear velocity x")

@@ -13,7 +13,7 @@
 bash simulation/isaac_sim/scripts/launch_sim.sh --headless --webview --task Robocup-Soccer
 
 # MuJoCo
-conda run -n mujoco312 python simulation/mujoco/k1_sim2sim_runner.py --team-size 3
+conda run -n mujoco312 python simulation/mujoco/sim2sim_runner.py --team-size 3
 
 # Sim Manager（推荐）
 conda run -n mujoco312 uvicorn simulation.labbridge.sim_manager:app --host 0.0.0.0 --port 8000

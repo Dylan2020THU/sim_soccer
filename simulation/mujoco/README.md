@@ -157,7 +157,7 @@ systemctl --user enable --now mujoco-sim-manager
 sudo loginctl enable-linger <username>
 ```
 
-入口脚本：`k1_sim2sim_runner.py`  
+入口脚本：`sim2sim_runner.py`  
 核心代码：`app/multi_robot_sim.py`  
 启动入口：`app/runner.py`
 
@@ -180,7 +180,7 @@ python -c "import mujoco, torch, zmq, flask, fastapi, uvicorn; print('ok')"
 
 ```bash
 cd ./mos-brain/simulation/mujoco
-conda run -n mujoco312 python k1_sim2sim_runner.py --team-size 3
+conda run -n mujoco312 python sim2sim_runner.py --team-size 3
 ```
 
 - `--robot-type`：机器人类型，可选 `k1`（默认）或 `pi_plus`
@@ -195,7 +195,7 @@ conda run -n mujoco312 python k1_sim2sim_runner.py --team-size 3
 示例（启动 `pi_plus`）：
 
 ```bash
-conda run -n mujoco312 python k1_sim2sim_runner.py --robot-type pi_plus --team-size 3
+conda run -n mujoco312 python sim2sim_runner.py --robot-type pi_plus --team-size 3
 ```
 
 ## cmd_vel 输入处理
