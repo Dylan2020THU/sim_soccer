@@ -19,6 +19,7 @@ class GenesisBridge:
         webview_port: int = 5811,
         web_fps: int = 20,
         enable_webview: bool = True,
+        allow_keyboard_control: bool = False,
         template_dir: Path | None = None,
     ):
         self.enable_webview = bool(enable_webview)
@@ -35,7 +36,10 @@ class GenesisBridge:
 
         self.webview: LabWebView | None = None
         if self.enable_webview:
-            self.webview = LabWebView(template_dir=self.template_dir)
+            self.webview = LabWebView(
+                template_dir=self.template_dir,
+                allow_keyboard_control=allow_keyboard_control,
+            )
             self.webview.start(port=int(webview_port))
             print(f"[GenesisBridge] WebView started at http://localhost:{int(webview_port)}")
 
@@ -80,6 +84,7 @@ def genesis_bridge(
     webview_port: int = 5811,
     web_fps: int = 20,
     enable_webview: bool = True,
+    allow_keyboard_control: bool = False,
     template_dir: Path | None = None,
 ) -> GenesisBridge:
     """Factory function for Genesis webview bridge."""
@@ -87,5 +92,6 @@ def genesis_bridge(
         webview_port=webview_port,
         web_fps=web_fps,
         enable_webview=enable_webview,
+        allow_keyboard_control=allow_keyboard_control,
         template_dir=template_dir,
     )

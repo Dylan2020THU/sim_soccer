@@ -48,6 +48,7 @@
   "zmq_port": null,
   "webview_port": null,
   "webview": true,
+  "allow_keyboard_control": false,
   "zmq": true,
   "policy_device": "gpu",
   "use_referee": false,
@@ -62,7 +63,7 @@
       <h3>cURL Examples</h3>
 <pre>curl -X POST http://127.0.0.1:8000/sims/start \
   -H "Content-Type: application/json" \
-  -d '{"team_size":3,"robot_type":"pi_plus","zmq_port":5555,"webview_port":5811,"webview":true,"zmq":true,"policy_device":"gpu","use_referee":true}'</pre>
+  -d '{"team_size":3,"robot_type":"pi_plus","zmq_port":5555,"webview_port":5811,"webview":true,"allow_keyboard_control":false,"zmq":true,"policy_device":"gpu","use_referee":true}'</pre>
 <pre>curl http://127.0.0.1:8000/sims</pre>
 <pre>curl -X POST http://127.0.0.1:8000/sims/stop \
   -H "Content-Type: application/json" \

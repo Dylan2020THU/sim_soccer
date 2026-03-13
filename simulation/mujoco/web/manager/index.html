@@ -75,6 +75,9 @@
           <label>use_referee
             <select id="use_referee"><option value="false" selected>false</option><option value="true">true</option></select>
           </label>
+          <label>allow_keyboard_control
+            <select id="allow_keyboard_control"><option value="false" selected>false</option><option value="true">true</option></select>
+          </label>
           <label>policy_device
             <select id="policy_device"><option value="gpu" selected>gpu</option><option value="cpu">cpu</option></select>
           </label>
@@ -203,7 +206,8 @@
           policy_device: document.getElementById("policy_device").value || "gpu",
           webview: document.getElementById("webview").value === "true",
           zmq: document.getElementById("zmq").value === "true",
-          use_referee: document.getElementById("use_referee").value === "true"
+          use_referee: document.getElementById("use_referee").value === "true",
+          allow_keyboard_control: document.getElementById("allow_keyboard_control").value === "true"
         };
         const res = await req("/sims/start", "POST", payload);
         setText("start_status", res);

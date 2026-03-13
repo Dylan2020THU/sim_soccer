@@ -278,6 +278,7 @@ class RuntimeArgs:
     web_fps: int
     web_width: int
     web_height: int
+    allow_keyboard_control: bool
     port: int
     team_size: int
     max_red_robots: int
@@ -387,6 +388,7 @@ def parse_runtime_args(mujoco_dir: Path) -> RuntimeArgs:
     parser.add_argument("--web-fps", type=int, default=20)
     parser.add_argument("--web-width", type=int, default=1280)
     parser.add_argument("--web-height", type=int, default=720)
+    parser.add_argument("--allow-keyboard-control", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--port", type=int, default=5555, help="ZeroMQ REP port.")
     parser.add_argument("--use-referee", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument(
@@ -417,6 +419,7 @@ def parse_runtime_args(mujoco_dir: Path) -> RuntimeArgs:
         web_fps=ns.web_fps,
         web_width=ns.web_width,
         web_height=ns.web_height,
+        allow_keyboard_control=ns.allow_keyboard_control,
         port=ns.port,
         team_size=team_size,
         max_red_robots=team_size,

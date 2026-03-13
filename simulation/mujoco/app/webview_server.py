@@ -29,16 +29,17 @@ class WebMsgBuffer:
 
 
 class MujocoLabWebView:
-    def __init__(self, template_dir: Path):
+    def __init__(self, template_dir: Path, allow_keyboard_control: bool = False):
         self.app = Flask(__name__, template_folder=str(template_dir))
         self.socketio = SocketIO(self.app, cors_allowed_origins="*")
         self.msg = WebMsgBuffer()
+        self.allow_keyboard_control = bool(allow_keyboard_control)
         self._setup_routes_and_events()
 
     def _setup_routes_and_events(self):
         @self.app.route("/")
         def index():
-            return render_template("index.html")
+            return render_template("index.html", allow_keyboard_control=self.allow_keyboard_control)
 
         @self.socketio.on("connect")
         def on_connect():

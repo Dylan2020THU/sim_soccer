@@ -167,6 +167,7 @@ class StartSimRequest(BaseModel):
     web_fps: int = Field(default=20, ge=1, le=120)
     web_width: int = Field(default=1280, ge=64, le=8192)
     web_height: int = Field(default=720, ge=64, le=8192)
+    allow_keyboard_control: bool = False
     robot_type: str = Field(default="pi_plus", pattern="^(k1|pi_plus)$")
     policy_device: str = Field(default="gpu", pattern="^(cpu|gpu)$")
     policy: str | None = None
@@ -272,6 +273,7 @@ class SimManager:
             req.policy_device,
         ]
         cmd += ["--webview"] if req.webview else ["--no-webview"]
+        cmd += ["--allow-keyboard-control"] if req.allow_keyboard_control else ["--no-allow-keyboard-control"]
         cmd += ["--zmq"] if req.zmq else ["--no-zmq"]
         cmd += ["--use-referee"] if req.use_referee else ["--no-use-referee"]
         if req.policy:

@@ -1564,7 +1564,10 @@ def run_sim(args: RuntimeArgs, template_dir: Path):
     sim = MultiRobotMujocoSim(args)
     webview = None
     if args.webview:
-        webview = MujocoLabWebView(template_dir=template_dir)
+        webview = MujocoLabWebView(
+            template_dir=template_dir,
+            allow_keyboard_control=args.allow_keyboard_control,
+        )
         webview.start(port=args.webview_port)
         print(f"[MujocoWebView] Started at http://localhost:{args.webview_port}")
 

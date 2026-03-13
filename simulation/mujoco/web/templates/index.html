@@ -147,12 +147,51 @@
                     </div>
                 </div>
             </div>
+
+            {% if allow_keyboard_control %}
+            <div class="control-section">
+                <details class="keyboard-control">
+                    <summary>Keyboard Control</summary>
+                    <div class="keyboard-control-body">
+                        <div class="control-row">
+                            <label style="margin: 0; flex: 1;">
+                                Robot
+                                <select id="keyboard-robot-select"></select>
+                            </label>
+                        </div>
+                        <div class="control-row">
+                            <label><input type="checkbox" id="keyboard-enable"> Enable keyboard control</label>
+                        </div>
+                        <div class="control-row keyboard-speed-row">
+                            <label class="keyboard-speed-label" for="kb-speed-vx">x speed</label>
+                            <input id="kb-speed-vx" type="range" min="0" max="1.5" step="0.05" value="0.6">
+                            <span id="kb-speed-vx-val" class="keyboard-speed-val">0.60</span>
+                        </div>
+                        <div class="control-row keyboard-speed-row">
+                            <label class="keyboard-speed-label" for="kb-speed-vy">y speed</label>
+                            <input id="kb-speed-vy" type="range" min="0" max="1.0" step="0.05" value="0.4">
+                            <span id="kb-speed-vy-val" class="keyboard-speed-val">0.40</span>
+                        </div>
+                        <div class="control-row keyboard-speed-row">
+                            <label class="keyboard-speed-label" for="kb-speed-wz">z speed</label>
+                            <input id="kb-speed-wz" type="range" min="0" max="3.0" step="0.1" value="0.8">
+                            <span id="kb-speed-wz-val" class="keyboard-speed-val">0.80</span>
+                        </div>
+                        <div class="keyboard-hint">Hold keys: W/S -> x, A/D -> y, Q/E -> ang_z</div>
+                        <div class="keyboard-hint">Space -> stop</div>
+                        <div class="keyboard-hint">Limits: x +/-1.5, y +/-1.0, z +/-3.0</div>
+                        <div id="keyboard-status" class="keyboard-status">Status: disabled</div>
+                    </div>
+                </details>
+            </div>
+            {% endif %}
         </div>
     </div>
 
     <script>
         // Establish SocketIO connection with the server
         const socket = io();
+        const allowKeyboardControl = {{ (allow_keyboard_control | default(false)) | tojson }};
 
         // Listen for 'new_frame' event from the server
         socket.on('new_frame', (data) => {
@@ -312,6 +351,192 @@
             panel.innerHTML = rows.length > 0 ? rows.join('') : '<div class="velocity-empty">No state yet</div>';
         }
 
+        function refreshKeyboardRobotOptions() {
+            if (!allowKeyboardControl) return;
+            if (keyboardRobotOptionsLocked) return;
+            const select = document.getElementById('keyboard-robot-select');
+            if (!select) return;
+            const robots = entities
+                .filter(e => e.name !== 'ball' && e.active)
+                .sort((a, b) => a.name.localeCompare(b.name))
+                .map(e => e.name);
+            const prev = (select.value || '').trim();
+            if (robots.length === 0) {
+                updateKeyboardStatus('Waiting active robots');
+                return;
+            }
+            select.innerHTML = '';
+            robots.forEach((name) => {
+                const opt = document.createElement('option');
+                opt.value = name;
+                opt.textContent = name;
+                select.appendChild(opt);
+            });
+            select.value = robots.includes(prev) ? prev : robots[0];
+            keyboardRobotOptionsLocked = true;
+        }
+
+        function selectedKeyboardRobot() {
+            if (!allowKeyboardControl) return '';
+            const select = document.getElementById('keyboard-robot-select');
+            return (select?.value || '').trim();
+        }
+
+        function updateKeyboardStatus(extra = '') {
+            if (!allowKeyboardControl) return;
+            const status = document.getElementById('keyboard-status');
+            if (!status) return;
+            const robot = selectedKeyboardRobot() || '-';
+            const mode = keyboardEnabled ? 'enabled' : 'disabled';
+            status.textContent = `Status: ${mode} | robot=${robot}${extra ? ` | ${extra}` : ''}`;
+        }
+
+        function clamp(v, lo, hi) {
+            return Math.max(lo, Math.min(hi, v));
+        }
+
+        function getKeyboardMagnitudes() {
+            const vx = parseFloat(document.getElementById('kb-speed-vx')?.value || '0');
+            const vy = parseFloat(document.getElementById('kb-speed-vy')?.value || '0');
+            const wz = parseFloat(document.getElementById('kb-speed-wz')?.value || '0');
+            return {
+                vx: clamp(Number.isFinite(vx) ? vx : 0.0, 0.0, KEYBOARD_LIMITS.vx),
+                vy: clamp(Number.isFinite(vy) ? vy : 0.0, 0.0, KEYBOARD_LIMITS.vy),
+                wz: clamp(Number.isFinite(wz) ? wz : 0.0, 0.0, KEYBOARD_LIMITS.wz),
+            };
+        }
+
+        function updateKeyboardSpeedLabels() {
+            if (!allowKeyboardControl) return;
+            const m = getKeyboardMagnitudes();
+            const set = (id, v) => {
+                const el = document.getElementById(id);
+                if (el) el.textContent = v.toFixed(2);
+            };
+            set('kb-speed-vx-val', m.vx);
+            set('kb-speed-vy-val', m.vy);
+            set('kb-speed-wz-val', m.wz);
+        }
+
+        function computeKeyboardCmd() {
+            const m = getKeyboardMagnitudes();
+            const dir = (k) => keyboardPressed.has(k) ? 1.0 : 0.0;
+            const vx = (dir('w') - dir('s')) * m.vx;
+            const vy = (dir('a') - dir('d')) * m.vy;
+            const wz = (dir('q') - dir('e')) * m.wz;
+            return { vx, vy, wz };
+        }
+
+        function emitKeyboardVelocity(forceZero = false) {
+            if (!allowKeyboardControl) return;
+            const robot = selectedKeyboardRobot();
+            if (!robot) return;
+            if (!keyboardEnabled && !forceZero) return;
+            const cmd = forceZero ? { vx: 0.0, vy: 0.0, wz: 0.0 } : computeKeyboardCmd();
+            emitRobotVelocity(robot, cmd.vx, cmd.vy, cmd.wz);
+            keyboardLastRobot = robot;
+            updateKeyboardStatus(`cmd=(${cmd.vx.toFixed(2)}, ${cmd.vy.toFixed(2)}, ${cmd.wz.toFixed(2)})`);
+        }
+
+        function zeroKeyboardRobot(name) {
+            if (!allowKeyboardControl) return;
+            const robot = (name || '').trim();
+            if (!robot) return;
+            emitRobotVelocity(robot, 0.0, 0.0, 0.0);
+        }
+
+        function startKeyboardLoop() {
+            if (keyboardTimer) return;
+            keyboardTimer = setInterval(() => emitKeyboardVelocity(false), 50);
+        }
+
+        function stopKeyboardLoop(sendZero = true) {
+            if (keyboardTimer) {
+                clearInterval(keyboardTimer);
+                keyboardTimer = null;
+            }
+            if (sendZero) emitKeyboardVelocity(true);
+        }
+
+        function onKeyboardEnableChanged() {
+            if (!allowKeyboardControl) return;
+            const enabled = !!document.getElementById('keyboard-enable')?.checked;
+            keyboardEnabled = enabled;
+            keyboardPressed.clear();
+            if (enabled) {
+                startKeyboardLoop();
+                updateKeyboardStatus('ready');
+            } else {
+                stopKeyboardLoop(true);
+                updateKeyboardStatus();
+            }
+        }
+
+        function handleKeyboardDown(e) {
+            if (!allowKeyboardControl || !keyboardEnabled) return;
+            const tag = (e.target?.tagName || '').toLowerCase();
+            if (tag === 'input' || tag === 'select' || tag === 'textarea' || tag === 'button' || e.target?.isContentEditable) {
+                return;
+            }
+            const k = (e.key || '').toLowerCase();
+            if (!['w', 'a', 's', 'd', 'q', 'e', ' '].includes(k)) return;
+            e.preventDefault();
+            if (k === ' ') {
+                keyboardPressed.clear();
+                emitKeyboardVelocity(true);
+                return;
+            }
+            keyboardPressed.add(k);
+        }
+
+        function handleKeyboardUp(e) {
+            if (!allowKeyboardControl || !keyboardEnabled) return;
+            const k = (e.key || '').toLowerCase();
+            if (!['w', 'a', 's', 'd', 'q', 'e'].includes(k)) return;
+            e.preventDefault();
+            keyboardPressed.delete(k);
+        }
+
+        function bindKeyboardControl() {
+            if (!allowKeyboardControl) return;
+            const enableEl = document.getElementById('keyboard-enable');
+            const selectEl = document.getElementById('keyboard-robot-select');
+            enableEl?.addEventListener('change', onKeyboardEnableChanged);
+            selectEl?.addEventListener('change', () => {
+                const prevRobot = keyboardLastRobot;
+                const currRobot = selectedKeyboardRobot();
+                if (prevRobot && prevRobot !== currRobot) {
+                    zeroKeyboardRobot(prevRobot);
+                }
+                if (keyboardEnabled) {
+                    emitKeyboardVelocity(true);
+                }
+                updateKeyboardStatus();
+            });
+            window.addEventListener('keydown', handleKeyboardDown);
+            window.addEventListener('keyup', handleKeyboardUp);
+            window.addEventListener('blur', () => {
+                keyboardPressed.clear();
+                if (keyboardEnabled) emitKeyboardVelocity(true);
+            });
+            document.addEventListener('visibilitychange', () => {
+                if (document.hidden) {
+                    keyboardPressed.clear();
+                    if (keyboardEnabled) emitKeyboardVelocity(true);
+                }
+            });
+            ['kb-speed-vx', 'kb-speed-vy', 'kb-speed-wz'].forEach((id) => {
+                const el = document.getElementById(id);
+                el?.addEventListener('input', () => {
+                    updateKeyboardSpeedLabels();
+                    if (keyboardEnabled) emitKeyboardVelocity(false);
+                });
+            });
+            updateKeyboardSpeedLabels();
+            refreshKeyboardRobotOptions();
+            updateKeyboardStatus();
+        }
+
         function toggleManualCam() {
             const el = document.getElementById('manual-cam-controls');
             el.style.display = el.style.display === 'none' ? 'block' : 'none';
@@ -338,6 +563,12 @@
         let velocityInputDrafts = {};
         let velocityRobotNames = [];
         let velocityControlsLocked = false;
+        const KEYBOARD_LIMITS = { vx: 1.5, vy: 1.0, wz: 3.0 };
+        let keyboardPressed = new Set();
+        let keyboardEnabled = false;
+        let keyboardTimer = null;
+        let keyboardLastRobot = '';
+        let keyboardRobotOptionsLocked = false;
 
         function formatPlayMode(mode) {
             const map = {
@@ -424,11 +655,13 @@
             }
             renderVelocityControls();
             renderVelocityInformation();
+            if (!keyboardRobotOptionsLocked) refreshKeyboardRobotOptions();
             drawMinimap();
         }
 
         document.addEventListener('DOMContentLoaded', () => {
             initEntities();
+            bindKeyboardControl();
         });
 
         let draggingEntity = null;
@@ -592,6 +825,7 @@
             document.getElementById('red-count').textContent = String(redCount);
             document.getElementById('blue-count').textContent = String(blueCount);
             renderVelocityControls();
+            if (!keyboardRobotOptionsLocked) refreshKeyboardRobotOptions();
             drawMinimap();
         });
 
@@ -826,6 +1060,58 @@
         .velocity-info-name {
             min-width: 72px;
             font-weight: 700;
+        }
+
+        .keyboard-control summary {
+            cursor: pointer;
+            font-size: 13px;
+            color: #495057;
+            font-weight: 700;
+        }
+
+        .keyboard-control-body {
+            margin-top: 10px;
+        }
+
+        .keyboard-speed-row {
+            align-items: center;
+            gap: 8px;
+        }
+
+        .keyboard-speed-label {
+            min-width: 52px;
+            margin: 0;
+            color: #495057;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .keyboard-speed-row input[type="range"] {
+            flex: 1;
+        }
+
+        .keyboard-speed-val {
+            min-width: 42px;
+            text-align: right;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+            font-size: 12px;
+            color: #1f2937;
+        }
+
+        .keyboard-hint {
+            font-size: 12px;
+            color: #495057;
+            margin-top: 6px;
+        }
+
+        .keyboard-status {
+            margin-top: 8px;
+            font-size: 12px;
+            color: #1f2937;
+            background: #f3f4f6;
+            border: 1px solid #e5e7eb;
+            border-radius: 6px;
+            padding: 6px 8px;
         }
 
         .referee-panel {
