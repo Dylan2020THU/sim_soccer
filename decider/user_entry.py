@@ -16,7 +16,7 @@ CUR_DIR = os.path.dirname(os.path.abspath(__file__))
 if CUR_DIR not in sys.path:
     sys.path.append(CUR_DIR)
 
-from logic.sub_statemachines import chase_ball, find_ball, go_back_to_field
+from logic.sub_statemachines import chase_ball, find_ball, go_back_to_field, dribble
 from logic.policy_statemachines import goalkeeper
 
 import csv
@@ -56,14 +56,12 @@ class AdvancedDribbler:
         
         # Parameters
         self.bturn_p = 2.0
-        self.side_correction_p = 3.4
-        self.forward_p = 1.3
+        self.side_correction_p = 2.5
+        self.forward_p = 1.0
         
         self.setup_dist = 0.40
         self.dribble_dist = 0.20 # Ball should be slightly in front
-        self.max_fw_vel = 1.2
-        self.min_push_aligned = 0.9
-        self.min_push_near_goal = 1.0
+        self.max_fw_vel = 0.8
         
         self.field_length = 14.0 # Default M
         self.field_width = 9.0
@@ -71,13 +69,6 @@ class AdvancedDribbler:
         # Anti-Oscillation
         self.spread_factor_max = 20.0 # degrees
         self.spread_factor_min = 5.0 # degrees
-        self.align_err_y_thresh = 0.08
-        self.align_err_y_thresh_far = 0.12
-        self.pre_align_angle_margin_deg = 6.0
-        self.pre_align_err_y_scale = 1.6
-        self.min_creep_factor = 0.18
-        self.recapture_side_thresh = 0.22
-        self.recapture_front_thresh = 0.28
         
     def get_target_vector(self):
         """
@@ -188,21 +179,6 @@ class AdvancedDribbler:
             }
             self.recorder.log(log_data)
             return  # Exit early, don't do normal dribble logic
-
-        # Recovery when ball is at side-front and easy to miss:
-        # avoid orbiting around the ball by recapturing first.
-        if b_x < self.recapture_front_thresh and abs(b_y) > self.recapture_side_thresh:
-            turn_speed = 1.2 * ball_angle_to_robot
-            turn_speed = max(min(turn_speed, 1.2), -1.2)
-            # Slight back-off gives space to re-center ball in front.
-            backoff_speed = -0.08 if b_x < 0.18 else 0.0
-            side_speed = -0.35 * np.sign(b_y)
-            self.logger.info(
-                f"[AdvDribble] RECAPTURE: bx={b_x:.2f}, by={b_y:.2f}, cmd=({backoff_speed:.2f},{side_speed:.2f},{turn_speed:.2f})"
-            )
-            self.agent.cmd_vel(backoff_speed, side_speed, turn_speed)
-            self.agent.move_head(math.inf, math.inf)
-            return
         
         # Target Vector
         target_vec_global, is_safe_zone = self.get_target_vector()
@@ -266,12 +242,17 @@ class AdvancedDribbler:
         cmd_y_virt = self.side_correction_p * err_y 
         
         # Forward Error: We want b_x_virt = setup_dist (or dribble_dist if aligned)
-        # Enforce y-alignment in both cases, with tighter gate near goal.
+        # Adaptive Deadband
+        deadband = self.spread_factor_max if is_safe_zone else self.spread_factor_min
+        # [NEW] Require Ball to be In Front (b_x_virt > 0) to consider Aligned
+        aligned = abs(target_angle_deg) < deadband and abs(err_y) < 0.1 and b_x_virt > 0.1
+        
+        # [NEW] 临门一脚 Mode: Near goal, be more aggressive
+        # Goal is at X = field_length/2, so threshold is ~80% of the way
         near_goal = my_pos is not None and my_pos[0] > self.field_length * 0.35
         if near_goal:
-            aligned = abs(err_y) < self.align_err_y_thresh and b_x_virt > 0.1
-        else:
-            aligned = abs(err_y) < self.align_err_y_thresh_far and b_x_virt > 0.05
+            # Relax alignment requirement
+            aligned = abs(target_angle_deg) < 25.0 and b_x_virt > 0.05
         
         # [NEW] Interpolate Target Distance for smooth transition (Creep)
         target_dist = self.setup_dist
@@ -286,11 +267,20 @@ class AdvancedDribbler:
 
         err_x = b_x_virt - target_dist
         
-        # Velocity gate: aligned -> full push, otherwise creep.
-        forward_factor = 1.0 if aligned else self.min_creep_factor
+        # Velocity Damping (Anti-Oscillation)
+        # Don't rush if not aligned
+        forward_factor = 1.0
+        if not aligned:
+            # Dampen based on angle error but allow "creep" if error is not huge
+            angle_err = abs(target_angle_deg)
+            if angle_err < 25.0:
+                # Creep zone: Interpolate 1.0 -> 0.2
+                forward_factor = 1.0 - (angle_err / 25.0) * 0.5 
+            else:
+                forward_factor = 0.0
         
         # [NEW] Near goal, always push forward aggressively
-        if near_goal and aligned and b_x_virt > 0.05:
+        if near_goal and b_x_virt > 0.05:
             forward_factor = max(forward_factor, 0.8)  # At least 80% power near goal
             
         cmd_x_virt = self.forward_p * err_x * forward_factor
@@ -298,13 +288,13 @@ class AdvancedDribbler:
         # [NEW] Minimum Push Velocity when Aligned
         # Always maintain minimum forward velocity when aligned (PUSH mode)
         if aligned:
-             if cmd_x_virt < self.min_push_aligned:  # Always keep stronger push when aligned
-                 cmd_x_virt = self.min_push_aligned
+             if cmd_x_virt < 0.5:  # Always push forward at min 0.5
+                 cmd_x_virt = 0.5
         
         # [NEW] Near goal, even if not aligned, keep pushing forward
-        if near_goal and aligned and b_x_virt > 0.1:
-            if cmd_x_virt < self.min_push_near_goal:  # Minimum near-goal push
-                cmd_x_virt = self.min_push_near_goal
+        if near_goal and b_x_virt > 0.1:
+            if cmd_x_virt < 0.4:  # Minimum near-goal push
+                cmd_x_virt = 0.4
         
         
         # [NEW] Clamp Virtual Velocities individually first
@@ -326,10 +316,10 @@ class AdvancedDribbler:
             scale = self.max_fw_vel / lin_vel_norm
             cmd_x *= scale
             cmd_y *= scale
-
-        # Clamp angular velocity for stable turning
-        da = max(min(da, 1.5), -1.5)
             
+        # [NEW] Clamp Angular Velocity
+        da = max(min(da, 1.5), -1.5)
+        
         # LOGGING
         log_data = {
             "time": time.time(),
@@ -363,22 +353,18 @@ def init(agent) -> None:
     agent.chase_ball_machine = chase_ball.ChaseBallStateMachine(agent)
     agent.find_ball_machine = find_ball.FindBallStateMachine(agent)
     agent.go_back_machine = go_back_to_field.GoBackToFieldStateMachine(agent)
+    agent.dribble_machine = dribble.DribbleStateMachine(agent)
     agent.goalkeeper_machine = goalkeeper.GoalkeeperStateMachine(agent)
     
     # Initialize Advanced Dribbler
     agent.adv_dribbler = AdvancedDribbler(agent)
-    # Keep compatibility with callers that pass aim_yaw/kwargs.
-    # All dribble entry points use AdvancedDribbler only.
-    def _run_adv_dribbler(*args, **kwargs):
-        return agent.adv_dribbler.run()
 
     agent.state_machine_runners = {
         "chase_ball": agent.chase_ball_machine.run,
         "find_ball": agent.find_ball_machine.run,
         "go_back_to_field": agent.go_back_machine.run,
-        "dribble": _run_adv_dribbler,
-        "adv_dribble": _run_adv_dribbler,
-        "adv_dribble_legacy": agent.adv_dribbler.run,
+        "dribble": agent.dribble_machine.run,
+        "adv_dribble": agent.adv_dribbler.run, # Register new runner
         "stop": agent.stop,
         "goalkeeper": agent.goalkeeper_machine.run,
     }
@@ -397,31 +383,13 @@ def loop(agent) -> None:
         traceback.print_exc()
 
 def game(agent) -> None:
-    # Dispatch mode from command first, then config, then default.
-    cmd_data = agent.get_command().get("data", {})
-    mode = cmd_data.get("test_mode")
-    if mode is None:
-        mode = agent.get_config().get("user_entry", {}).get("mode", "playing")
-
-    _dispatch_mode(agent, mode)
-
-def _dispatch_mode(agent, mode: str) -> None:
-    mode_map = {
-        "playing": _playing_logic,
-        "adv_dribble": _test_adv_dribble,
-        "adv_dribble_legacy": _test_adv_dribble_legacy,
-        "dribble": _test_dribble,
-        "find_ball": _test_find_ball,
-        "chase_ball": _test_chase_ball,
-        "go_back_to_field": _test_go_back_to_field,
-        "goalkeeper": _test_goalkeeper,
-        "stop": _test_stop,
-    }
-    runner = mode_map.get(mode)
-    if runner is None:
-        agent.get_logger().warning(f"[UserEntry] Unknown mode '{mode}', fallback to 'playing'.")
-        runner = _playing_logic
-    runner(agent)
+    # # --- Debug Coordinates ---
+    # from debug_coords import debug_coords
+    # debug_coords(agent)
+    
+    # --- Select Test to Run ---
+    # _playing_logic(agent)        # Default: Full Playing Logic
+    _test_adv_dribble(agent)     # TEST ARGUMENT: Using Advanced Dribble
 
 def _playing_logic(agent):
     """
@@ -446,12 +414,6 @@ def _test_adv_dribble(agent) -> None:
     else:
         agent.state_machine_runners['adv_dribble']()
 
-def _test_adv_dribble_legacy(agent) -> None:
-    if not agent.get_if_ball():
-        agent.state_machine_runners['find_ball']()
-    else:
-        agent.state_machine_runners['adv_dribble_legacy']()
-
 def _test_dribble(agent) -> None:
     if not agent.get_if_ball():
         agent.state_machine_runners['find_ball']()
@@ -466,16 +428,3 @@ def _test_chase_ball(agent) -> None:
         agent.state_machine_runners['find_ball']()
     else:
         agent.state_machine_runners['chase_ball']()
-
-def _test_go_back_to_field(agent) -> None:
-    cmd_data = agent.get_command().get("data", {})
-    aim_x = cmd_data.get("aim_x", 0)
-    aim_y = cmd_data.get("aim_y", 0)
-    aim_yaw = cmd_data.get("aim_yaw", 0)
-    agent.state_machine_runners['go_back_to_field'](aim_x=aim_x, aim_y=aim_y, aim_yaw=aim_yaw)
-
-def _test_goalkeeper(agent) -> None:
-    agent.state_machine_runners['goalkeeper']()
-
-def _test_stop(agent) -> None:
-    agent.state_machine_runners['stop']()

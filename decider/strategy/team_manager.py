@@ -1,7 +1,4 @@
 #!/usr/bin/env python3
-# SPDX-FileCopyrightText: Copyright (c) MOS-Brain Contributors
-# SPDX-License-Identifier: GPL-3.0-or-later
-
 
 import threading
 import time

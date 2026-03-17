@@ -1,6 +1,3 @@
-# SPDX-FileCopyrightText: Copyright (c) MOS-Brain Contributors
-# SPDX-License-Identifier: GPL-3.0-or-later
-
 import json
 import re
 import yaml

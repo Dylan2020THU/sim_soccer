@@ -696,6 +696,7 @@ def _build_multi_robot_soccer_scene_xml(
     goal_cfg: dict[str, float] | None = None,
     outer_floor_cfg: dict[str, object] | None = None,
     field_markings_cfg: dict[str, object] | None = None,
+    keep_robot_sensors: bool = False,
 ) -> tuple[Path, list[int]]:
     meshdir = robot_xml.parent / "meshes"
     robot_root = ET.fromstring(robot_xml.read_text(encoding="utf-8"))
@@ -722,9 +723,16 @@ def _build_multi_robot_soccer_scene_xml(
     for child in list(template_actuator):
         template_actuator.remove(child)
 
-    sensor = robot_root.find("sensor")
-    if sensor is not None:
-        robot_root.remove(sensor)
+    template_sensor = robot_root.find("sensor")
+    template_sensors: list[ET.Element] = []
+    if template_sensor is not None:
+        if keep_robot_sensors:
+            template_sensors = list(template_sensor)
+            for child in list(template_sensor):
+                template_sensor.remove(child)
+        else:
+            robot_root.remove(template_sensor)
+            template_sensor = None
 
     active_robot_ids: list[int] = []
     template_pos_vals = [float(v) for v in (template_body.get("pos", "0 0 0").split())]
@@ -749,6 +757,16 @@ def _build_multi_robot_soccer_scene_xml(
                 if act_copy.get("joint"):
                     act_copy.set("joint", f"{robot_name}__{act_copy.get('joint')}")
                 template_actuator.append(act_copy)
+            if template_sensor is not None:
+                for sen in template_sensors:
+                    sen_copy = deepcopy(sen)
+                    if sen_copy.get("name"):
+                        sen_copy.set("name", f"{robot_name}__{sen_copy.get('name')}")
+                    for attr in ("joint", "actuator", "site", "objname", "body", "tendon"):
+                        ref = sen_copy.get(attr)
+                        if ref:
+                            sen_copy.set(attr, f"{robot_name}__{ref}")
+                    template_sensor.append(sen_copy)
 
             active_robot_ids.append(rid)
 
@@ -847,6 +865,46 @@ def _quat_to_rot_world_from_body(quat_wxyz: np.ndarray) -> np.ndarray:
     )
 
 
+def _quat_apply_inverse(q: np.ndarray, v: np.ndarray) -> np.ndarray:
+    q_w = q[-1]
+    q_vec = q[:3]
+    a = v * (2.0 * q_w**2 - 1.0)
+    b = np.cross(q_vec, v) * q_w * 2.0
+    c = q_vec * np.dot(q_vec, v) * 2.0
+    return a - b + c
+
+
+# Keep the pi_plus constants aligned with sim2sim_pi_plus.py.
+PI_PLUS_JOINTS_MUJOCO_ORDER = [
+    "l_hip_pitch_joint",
+    "l_hip_roll_joint",
+    "l_thigh_joint",
+    "l_calf_joint",
+    "l_ankle_pitch_joint",
+    "l_ankle_roll_joint",
+    "l_shoulder_pitch_joint",
+    "l_shoulder_roll_joint",
+    "l_upper_arm_joint",
+    "l_elbow_joint",
+    "r_hip_pitch_joint",
+    "r_hip_roll_joint",
+    "r_thigh_joint",
+    "r_calf_joint",
+    "r_ankle_pitch_joint",
+    "r_ankle_roll_joint",
+    "r_shoulder_pitch_joint",
+    "r_shoulder_roll_joint",
+    "r_upper_arm_joint",
+    "r_elbow_joint",
+]
+PI_PLUS_ISAAC_TO_MUJOCO_IDX = np.asarray([0, 4, 8, 12, 16, 18, 1, 5, 9, 13, 2, 6, 10, 14, 17, 19, 3, 7, 11, 15], dtype=np.int32)
+PI_PLUS_MUJOCO_TO_ISAAC_IDX = np.asarray([0, 6, 10, 16, 1, 7, 11, 17, 2, 8, 12, 18, 3, 9, 13, 19, 4, 14, 5, 15], dtype=np.int32)
+PI_PLUS_DEFAULT_DOF_POS_MUJOCO = np.asarray(
+    [-0.25, 0.0, 0.0, 0.65, -0.4, 0.0, 0.0, 0.2, 0.0, -1.2, -0.25, 0.0, 0.0, 0.65, -0.4, 0.0, 0.0, -0.2, 0.0, -1.2],
+    dtype=np.float32,
+)
+
+
 @dataclass
 class RobotSpec:
     rid: int
@@ -870,6 +928,14 @@ class RobotSpec:
     effort: np.ndarray
     obs_step_dim: int
     obs_history: np.ndarray
+    pi_qpos_idx_mujoco: np.ndarray | None = None
+    pi_qvel_idx_mujoco: np.ndarray | None = None
+    pi_act_idx_mujoco: np.ndarray | None = None
+    pi_default_dof_pos: np.ndarray | None = None
+    pi_isaac_to_mujoco_idx: np.ndarray | None = None
+    pi_mujoco_to_isaac_idx: np.ndarray | None = None
+    pi_filtered_dof_target: np.ndarray | None = None
+    pi_target_dof_pos: np.ndarray | None = None
 
 
 class MultiRobotMujocoSim:
@@ -900,6 +966,7 @@ class MultiRobotMujocoSim:
             goal_cfg=goal_cfg,
             outer_floor_cfg=outer_floor_cfg,
             field_markings_cfg=field_markings_cfg,
+            keep_robot_sensors=(self.robot_cfg.robot_type == PI_PLUS_ROBOT_TYPE),
         )
 
         self.model = mujoco.MjModel.from_xml_path(str(scene_xml))
@@ -976,6 +1043,13 @@ class MultiRobotMujocoSim:
             print("[MultiRobotMujocoSim] referee: disabled")
 
         self._web_camera = None
+        self._render_scene_option = None
+        if args.render_collision_meshes:
+            self._render_scene_option = mujoco.MjvOption()
+            mujoco.mjv_defaultOption(self._render_scene_option)
+            # MuJoCo convention in our robot XMLs: visual geoms use group 1, collision geoms stay in group 0.
+            self._render_scene_option.geomgroup[:] = 1
+            self._render_scene_option.geomgroup[1] = 0
 
     def _apply_team_body_colors(self) -> None:
         """
@@ -1132,12 +1206,44 @@ class MultiRobotMujocoSim:
                 init_joint_pos[local_idx] = float(val)
                 self.data.qpos[qpos_idx[local_idx]] = float(val)
             init_angles = init_joint_pos.copy()
+            pi_qpos_idx_mujoco = None
+            pi_qvel_idx_mujoco = None
+            pi_act_idx_mujoco = None
+            pi_default_dof_pos = None
+            pi_isaac_to_mujoco_idx = None
+            pi_mujoco_to_isaac_idx = None
+            pi_filtered_dof_target = None
+            pi_target_dof_pos = None
 
             if self.robot_cfg.robot_type == PI_PLUS_ROBOT_TYPE:
                 if len(joint_names) != len(PI_PLUS_KP_POLICY_ORDER) or len(joint_names) != len(PI_PLUS_KD_POLICY_ORDER):
                     raise RuntimeError("pi_plus kp/kd config length mismatch")
                 kp = np.asarray(PI_PLUS_KP_POLICY_ORDER, dtype=np.float32)
                 kd = np.asarray(PI_PLUS_KD_POLICY_ORDER, dtype=np.float32)
+                pi_pref_joints = [f"{name}__{j}" for j in PI_PLUS_JOINTS_MUJOCO_ORDER]
+                pi_qpos = []
+                pi_qvel = []
+                pi_act = []
+                for jn in pi_pref_joints:
+                    jid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, jn)
+                    if jid < 0:
+                        raise RuntimeError(f"Missing pi_plus mujoco-order joint: {jn}")
+                    pi_qpos.append(int(self.model.jnt_qposadr[jid]))
+                    pi_qvel.append(int(self.model.jnt_dofadr[jid]))
+                    aid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_ACTUATOR, jn)
+                    if aid < 0:
+                        raise RuntimeError(f"Missing pi_plus mujoco-order actuator: {jn}")
+                    pi_act.append(int(aid))
+                pi_qpos_idx_mujoco = np.asarray(pi_qpos, dtype=np.int32)
+                pi_qvel_idx_mujoco = np.asarray(pi_qvel, dtype=np.int32)
+                pi_act_idx_mujoco = np.asarray(pi_act, dtype=np.int32)
+                pi_default_dof_pos = PI_PLUS_DEFAULT_DOF_POS_MUJOCO.copy()
+                pi_isaac_to_mujoco_idx = PI_PLUS_ISAAC_TO_MUJOCO_IDX.copy()
+                pi_mujoco_to_isaac_idx = PI_PLUS_MUJOCO_TO_ISAAC_IDX.copy()
+                # Keep startup pose exactly aligned with sim2sim_pi_plus.py default_dof_pos.
+                self.data.qpos[pi_qpos_idx_mujoco] = pi_default_dof_pos
+                pi_filtered_dof_target = pi_default_dof_pos.copy()
+                pi_target_dof_pos = pi_default_dof_pos.copy()
             else:
                 kp = parse_param_for_joint_names(pref_joints, self.robot_cfg.motor_stiffness)
                 kd = parse_param_for_joint_names(pref_joints, self.robot_cfg.motor_damping)
@@ -1165,6 +1271,14 @@ class MultiRobotMujocoSim:
                 effort=effort,
                 obs_step_dim=obs_step_dim,
                 obs_history=np.zeros((obs_dim,), dtype=np.float32),
+                pi_qpos_idx_mujoco=pi_qpos_idx_mujoco,
+                pi_qvel_idx_mujoco=pi_qvel_idx_mujoco,
+                pi_act_idx_mujoco=pi_act_idx_mujoco,
+                pi_default_dof_pos=pi_default_dof_pos,
+                pi_isaac_to_mujoco_idx=pi_isaac_to_mujoco_idx,
+                pi_mujoco_to_isaac_idx=pi_mujoco_to_isaac_idx,
+                pi_filtered_dof_target=pi_filtered_dof_target,
+                pi_target_dof_pos=pi_target_dof_pos,
             )
         return specs
 
@@ -1220,6 +1334,46 @@ class MultiRobotMujocoSim:
 
         cmd = cmd_src * obs_scale["cmd"]
 
+        if (
+            self.robot_cfg.robot_type == PI_PLUS_ROBOT_TYPE
+            and spec.pi_qpos_idx_mujoco is not None
+            and spec.pi_qvel_idx_mujoco is not None
+            and spec.pi_default_dof_pos is not None
+            and spec.pi_mujoco_to_isaac_idx is not None
+        ):
+            # Keep pi_plus observation assembly aligned with sim2sim_pi_plus.py.
+            dof_pos = qpos[spec.pi_qpos_idx_mujoco].astype(np.float32)
+            dof_vel = qvel[spec.pi_qvel_idx_mujoco].astype(np.float32)
+            sensor_ang_name = f"{spec.name}__angular-velocity"
+            sensor_ori_name = f"{spec.name}__orientation"
+            try:
+                base_ang_pi = self.data.sensor(sensor_ang_name).data.astype(np.float32)
+            except Exception:
+                base_ang_pi = base_ang.astype(np.float32)
+            try:
+                ori_wxyz = self.data.sensor(sensor_ori_name).data.astype(np.float32)
+                quat_xyzw = ori_wxyz[[1, 2, 3, 0]]
+            except Exception:
+                quat_xyzw = np.asarray([quat[1], quat[2], quat[3], quat[0]], dtype=np.float32)
+            gravity_pi = _quat_apply_inverse(quat_xyzw, np.array([0.0, 0.0, -1.0], dtype=np.float32)).astype(np.float32)
+            obs_step = np.zeros((spec.obs_step_dim,), dtype=np.float32)
+            obs_step[0:3] = base_ang_pi * obs_scale["base_ang_vel"]
+            obs_step[3:6] = gravity_pi * obs_scale["gravity_orientation"]
+            obs_step[6:9] = cmd.astype(np.float32)
+            obs_step[9:29] = (
+                (dof_pos - spec.pi_default_dof_pos)[spec.pi_mujoco_to_isaac_idx].astype(np.float32) * obs_scale["joint_pos"]
+            )
+            obs_step[29:49] = dof_vel[spec.pi_mujoco_to_isaac_idx].astype(np.float32) * obs_scale["joint_vel"]
+            obs_step[49:69] = (
+                np.clip(spec.last_action, ACTION_CLIP[0], ACTION_CLIP[1]).astype(np.float32) * obs_scale["last_action"]
+            )
+            obs_step = np.nan_to_num(obs_step, nan=0.0, posinf=0.0, neginf=0.0)
+            if self.robot_cfg.obs_history_length <= 1:
+                return np.clip(obs_step, -self.robot_cfg.obs_clip, self.robot_cfg.obs_clip)
+            spec.obs_history = np.roll(spec.obs_history, shift=-spec.obs_step_dim)
+            spec.obs_history[-spec.obs_step_dim :] = obs_step
+            return np.clip(spec.obs_history, -self.robot_cfg.obs_clip, self.robot_cfg.obs_clip)
+
         joint_pos = (qpos[spec.qpos_idx] - spec.init_joint_pos).astype(np.float32) * obs_scale["joint_pos"]
         joint_vel = qvel[spec.qvel_idx].astype(np.float32) * obs_scale["joint_vel"]
         last_action = spec.last_action * obs_scale["last_action"]
@@ -1252,6 +1406,9 @@ class MultiRobotMujocoSim:
                 spec.last_action[:] = 0.0
                 spec.filtered_dof_target[:] = spec.init_angles
                 spec.target_joint_pos[:] = spec.init_angles
+                if spec.pi_default_dof_pos is not None and spec.pi_filtered_dof_target is not None and spec.pi_target_dof_pos is not None:
+                    spec.pi_filtered_dof_target[:] = spec.pi_default_dof_pos
+                    spec.pi_target_dof_pos[:] = spec.pi_default_dof_pos
                 continue
 
             zero_left = self._robot_cmd_zero_frames_left.get(spec.rid, 0)
@@ -1277,14 +1434,35 @@ class MultiRobotMujocoSim:
                 if spec.rid == debug_rid:
                     debug_obs = infer_obs[i].copy()
                     debug_act = act.copy()
-                spec.last_action[:] = act
-                act_scaled = np.clip(act * spec.action_scale, ACTION_CLIP[0], ACTION_CLIP[1])
-                joint_pos_action = spec.init_angles + act_scaled
-                if ACTION_SMOOTH_FILTER:
-                    spec.filtered_dof_target[:] = spec.filtered_dof_target * 0.2 + joint_pos_action * 0.8
+                if (
+                    self.robot_cfg.robot_type == PI_PLUS_ROBOT_TYPE
+                    and spec.pi_default_dof_pos is not None
+                    and spec.pi_isaac_to_mujoco_idx is not None
+                    and spec.pi_mujoco_to_isaac_idx is not None
+                    and spec.pi_filtered_dof_target is not None
+                    and spec.pi_target_dof_pos is not None
+                ):
+                    act = np.clip(act, ACTION_CLIP[0], ACTION_CLIP[1]).astype(np.float32, copy=False)
+                    spec.last_action[:] = act
+                    actions_scaled = act * spec.action_scale
+                    target_dof_pos = actions_scaled[spec.pi_isaac_to_mujoco_idx] + spec.pi_default_dof_pos
+                    if ACTION_SMOOTH_FILTER:
+                        spec.pi_filtered_dof_target[:] = spec.pi_filtered_dof_target * 0.2 + target_dof_pos * 0.8
+                    else:
+                        spec.pi_filtered_dof_target[:] = target_dof_pos
+                    spec.pi_target_dof_pos[:] = spec.pi_filtered_dof_target
+                    # Keep legacy buffers coherent (policy order) for debug/reset consistency.
+                    spec.target_joint_pos[:] = spec.pi_target_dof_pos[spec.pi_mujoco_to_isaac_idx]
+                    spec.filtered_dof_target[:] = spec.target_joint_pos
                 else:
-                    spec.filtered_dof_target[:] = joint_pos_action
-                spec.target_joint_pos[:] = spec.filtered_dof_target
+                    spec.last_action[:] = act
+                    act_scaled = np.clip(act * spec.action_scale, ACTION_CLIP[0], ACTION_CLIP[1])
+                    joint_pos_action = spec.init_angles + act_scaled
+                    if ACTION_SMOOTH_FILTER:
+                        spec.filtered_dof_target[:] = spec.filtered_dof_target * 0.2 + joint_pos_action * 0.8
+                    else:
+                        spec.filtered_dof_target[:] = joint_pos_action
+                    spec.target_joint_pos[:] = spec.filtered_dof_target
 
         if (
             not self._printed_target_policy_io
@@ -1303,16 +1481,35 @@ class MultiRobotMujocoSim:
         for spec in self.robot_specs.values():
             if self._is_robot_protected(spec.rid):
                 self.data.ctrl[spec.act_idx] = self._startup_ctrl[spec.act_idx]
+                if spec.pi_act_idx_mujoco is not None:
+                    self.data.ctrl[spec.pi_act_idx_mujoco] = self._startup_ctrl[spec.pi_act_idx_mujoco]
                 continue
-            q = self.data.qpos[spec.qpos_idx]
-            qd = self.data.qvel[spec.qvel_idx]
+            use_pi_pd = (
+                self.robot_cfg.robot_type == PI_PLUS_ROBOT_TYPE
+                and spec.pi_qpos_idx_mujoco is not None
+                and spec.pi_qvel_idx_mujoco is not None
+                and spec.pi_act_idx_mujoco is not None
+                and spec.pi_target_dof_pos is not None
+            )
+            if use_pi_pd:
+                q = self.data.qpos[spec.pi_qpos_idx_mujoco]
+                qd = self.data.qvel[spec.pi_qvel_idx_mujoco]
+            else:
+                q = self.data.qpos[spec.qpos_idx]
+                qd = self.data.qvel[spec.qvel_idx]
             q = np.nan_to_num(q, nan=0.0, posinf=0.0, neginf=0.0)
             qd = np.nan_to_num(qd, nan=0.0, posinf=0.0, neginf=0.0)
-            target = np.nan_to_num(spec.target_joint_pos, nan=0.0, posinf=0.0, neginf=0.0)
+            if use_pi_pd:
+                target = np.nan_to_num(spec.pi_target_dof_pos, nan=0.0, posinf=0.0, neginf=0.0)
+            else:
+                target = np.nan_to_num(spec.target_joint_pos, nan=0.0, posinf=0.0, neginf=0.0)
             tau = spec.kp * (target - q) + spec.kd * (0.0 - qd)
             tau = np.clip(tau, -spec.effort, spec.effort)
             tau = np.nan_to_num(tau, nan=0.0, posinf=0.0, neginf=0.0)
-            self.data.ctrl[spec.act_idx] = tau
+            if use_pi_pd:
+                self.data.ctrl[spec.pi_act_idx_mujoco] = tau
+            else:
+                self.data.ctrl[spec.act_idx] = tau
 
     def _step_once(self, counter: int) -> int:
         pre_hold_changed = self._apply_robot_protection_holds()
@@ -1423,10 +1620,18 @@ class MultiRobotMujocoSim:
         self.data.qvel[spec.base_qvel_adr : spec.base_qvel_adr + 6] = self._startup_qvel[spec.base_qvel_adr : spec.base_qvel_adr + 6]
         self.data.qpos[spec.qpos_idx] = self._startup_qpos[spec.qpos_idx]
         self.data.qvel[spec.qvel_idx] = self._startup_qvel[spec.qvel_idx]
+        if spec.pi_qpos_idx_mujoco is not None and spec.pi_qvel_idx_mujoco is not None:
+            self.data.qpos[spec.pi_qpos_idx_mujoco] = self._startup_qpos[spec.pi_qpos_idx_mujoco]
+            self.data.qvel[spec.pi_qvel_idx_mujoco] = self._startup_qvel[spec.pi_qvel_idx_mujoco]
         self.data.ctrl[spec.act_idx] = self._startup_ctrl[spec.act_idx]
+        if spec.pi_act_idx_mujoco is not None:
+            self.data.ctrl[spec.pi_act_idx_mujoco] = self._startup_ctrl[spec.pi_act_idx_mujoco]
         spec.last_action[:] = 0.0
         spec.filtered_dof_target[:] = spec.init_angles
         spec.target_joint_pos[:] = spec.init_angles
+        if spec.pi_default_dof_pos is not None and spec.pi_filtered_dof_target is not None and spec.pi_target_dof_pos is not None:
+            spec.pi_filtered_dof_target[:] = spec.pi_default_dof_pos
+            spec.pi_target_dof_pos[:] = spec.pi_default_dof_pos
 
     def _hold_robot_at_reset_pose(self, spec: RobotSpec, x: float, y: float, theta: float):
         self._reset_one_robot(spec)
@@ -1481,6 +1686,9 @@ class MultiRobotMujocoSim:
             spec.last_action[:] = 0.0
             spec.filtered_dof_target[:] = spec.init_angles
             spec.target_joint_pos[:] = spec.init_angles
+            if spec.pi_default_dof_pos is not None and spec.pi_filtered_dof_target is not None and spec.pi_target_dof_pos is not None:
+                spec.pi_filtered_dof_target[:] = spec.pi_default_dof_pos
+                spec.pi_target_dof_pos[:] = spec.pi_default_dof_pos
         self.command_buffer = {rid: np.array(DEFAULT_CMD, dtype=np.float32) for rid in FIXED_ROBOT_ID_TO_NAME}
         self.command_ts = {rid: float("-inf") for rid in FIXED_ROBOT_ID_TO_NAME}
         self.command_received = {rid: False for rid in FIXED_ROBOT_ID_TO_NAME}
@@ -1812,7 +2020,17 @@ class MultiRobotMujocoSim:
                 if webview is not None:
                     now = time.time()
                     if renderer is not None and now >= next_frame_time:
-                        renderer.update_scene(self.data, camera=self._web_camera)
+                        if self._render_scene_option is not None:
+                            try:
+                                renderer.update_scene(
+                                    self.data,
+                                    camera=self._web_camera,
+                                    scene_option=self._render_scene_option,
+                                )
+                            except TypeError:
+                                renderer.update_scene(self.data, camera=self._web_camera)
+                        else:
+                            renderer.update_scene(self.data, camera=self._web_camera)
                         frame = renderer.render()
                         webview.emit_frame(frame)
                         next_frame_time = now + frame_interval

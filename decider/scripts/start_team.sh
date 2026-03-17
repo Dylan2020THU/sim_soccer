@@ -5,13 +5,13 @@
 mkdir -p logs
 
 # Activate k1 conda environment
-# source ~/anaconda3/etc/profile.d/conda.sh
+source ~/anaconda3/etc/profile.d/conda.sh
 conda activate k1
 
 # Paths
 DECIDER_DIR="$(dirname "$(dirname "$(readlink -f "$0")")")" # mos-brain/decider
 MOS_BRAIN_DIR="$(dirname "$DECIDER_DIR")"
-CONFIG_FILE="$MOS_BRAIN_DIR/simulation/isaac_sim/config/match_config.json"
+CONFIG_FILE="$MOS_BRAIN_DIR/simulation/config/match_config.json"
 DECIDER_SCRIPT="$DECIDER_DIR/decider.py"
 
 echo "Using Match Config: $CONFIG_FILE"

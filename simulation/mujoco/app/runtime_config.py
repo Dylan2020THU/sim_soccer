@@ -278,6 +278,7 @@ class RuntimeArgs:
     web_fps: int
     web_width: int
     web_height: int
+    render_collision_meshes: bool
     allow_keyboard_control: bool
     port: int
     team_size: int
@@ -389,6 +390,12 @@ def parse_runtime_args(mujoco_dir: Path) -> RuntimeArgs:
     parser.add_argument("--web-fps", type=int, default=20)
     parser.add_argument("--web-width", type=int, default=1280)
     parser.add_argument("--web-height", type=int, default=720)
+    parser.add_argument(
+        "--render-collision-meshes",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Render collision geoms instead of visual geoms in the MuJoCo web viewer.",
+    )
     parser.add_argument("--allow-keyboard-control", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--port", type=int, default=5555, help="ZeroMQ REP port.")
     parser.add_argument("--use-referee", action=argparse.BooleanOptionalAction, default=False)
@@ -426,6 +433,7 @@ def parse_runtime_args(mujoco_dir: Path) -> RuntimeArgs:
         web_fps=ns.web_fps,
         web_width=ns.web_width,
         web_height=ns.web_height,
+        render_collision_meshes=ns.render_collision_meshes,
         allow_keyboard_control=ns.allow_keyboard_control,
         port=ns.port,
         team_size=team_size,

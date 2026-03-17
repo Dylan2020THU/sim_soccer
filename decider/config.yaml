@@ -25,17 +25,17 @@ initial_pos:
   y: 0
   theta: 0
 
-league: "S" # "S", "M", "L"
+league: "M" # "S", "M", "L"
 
 # ball
 close_to_ball_threshold: 0.5
 
 # velocities
-walk_vel_x: 2
-walk_vel_y: 1
+walk_vel_x: 0.5
+walk_vel_y: 0.5
 walk_vel_theta: 1
-max_walk_vel_x: 2.0
-max_walk_vel_y: 1.0
+max_walk_vel_x: 1.5
+max_walk_vel_y: 2.0
 max_walk_vel_theta: 3.0
 
 # networking
@@ -150,13 +150,13 @@ go_back_to_field:
   walk_vel_x: 0.5
   walk_vel_theta: 1
   arrive_trust_time: 20
-  obstacle_avoidance: false
+  obstacle_avoidance: true
 chase:
   close_angle_threshold_rad: 1.2
   walk_vel_x: 1
   walk_vel_theta: 2
   default_chase_distance: 1.0
-  obstacle_avoidance: false
+  obstacle_avoidance: true
 kick:
   good_angle_threshold_degree: 10
   really_bad_angle_threshold_degree: 30
