@@ -351,19 +351,39 @@ class SimManager:
         self._cleanup_dead()
         return {"pid": pid, "stopped": bool(ok)}
 
-    def stop_external(self) -> dict[str, Any]:
+    def stop_all(self) -> dict[str, Any]:
         self._cleanup_dead()
         data = self._load()
         managed = data.get("managed", {})
         managed_pids = {int(item["pid"]) for item in managed.values()}
 
         scanned = _scan_sim_processes()
-        targets = [int(row["pid"]) for row in scanned if int(row["pid"]) not in managed_pids]
+        targets = sorted({int(row["pid"]) for row in scanned})
+        managed_targets = [pid for pid in targets if pid in managed_pids]
+        external_targets = [pid for pid in targets if pid not in managed_pids]
         results = []
         for pid in targets:
-            results.append({"pid": pid, "stopped": _terminate_pid(pid)})
+            results.append(
+                {
+                    "pid": pid,
+                    "managed": pid in managed_pids,
+                    "stopped": _terminate_pid(pid),
+                }
+            )
         self._cleanup_dead()
-        return {"targets": targets, "results": results}
+        data = self._load()
+        data["managed"] = {}
+        self._save(data)
+        return {
+            "targets": targets,
+            "managed_targets": managed_targets,
+            "external_targets": external_targets,
+            "results": results,
+        }
+
+    # Backward-compatible alias: old API name now performs stop-all.
+    def stop_external(self) -> dict[str, Any]:
+        return self.stop_all()
 
     def stop_all_managed(self) -> dict[str, Any]:
         self._cleanup_dead()
@@ -425,9 +445,13 @@ def create_app(manager: SimManager | None = None) -> FastAPI:
     def stop_sim(req: StopRequest):
         return mgr.stop_pid(int(req.pid))
 
+    @app.post("/sims/stop-all")
+    def stop_all_sims():
+        return mgr.stop_all()
+
     @app.post("/sims/stop-external")
     def stop_external_sims():
-        return mgr.stop_external()
+        return mgr.stop_all()
 
     return app
 

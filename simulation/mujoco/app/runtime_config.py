@@ -285,6 +285,7 @@ class RuntimeArgs:
     max_blue_robots: int
     use_referee: bool
     policy_device: str
+    real_time: bool
 
 
 def _clamp_team_count(v: int) -> int:
@@ -392,6 +393,12 @@ def parse_runtime_args(mujoco_dir: Path) -> RuntimeArgs:
     parser.add_argument("--port", type=int, default=5555, help="ZeroMQ REP port.")
     parser.add_argument("--use-referee", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument(
+        "--real-time",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Run simulation in real-time pace. Default false: run as fast as possible.",
+    )
+    parser.add_argument(
         "--policy-device",
         type=str,
         choices=["cpu", "gpu"],
@@ -426,6 +433,7 @@ def parse_runtime_args(mujoco_dir: Path) -> RuntimeArgs:
         max_blue_robots=team_size,
         use_referee=ns.use_referee,
         policy_device=ns.policy_device,
+        real_time=ns.real_time,
     )
 
 

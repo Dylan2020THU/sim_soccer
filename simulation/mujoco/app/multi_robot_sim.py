@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 import sys
 import tempfile
@@ -161,6 +162,86 @@ def _load_outer_floor_config_from_match_config(match_config_path: Path | None) -
             cfg["edge_wall_collision"] = bool(outer["edge_wall_collision"])
         if "edge_wall_color" in outer and isinstance(outer["edge_wall_color"], (list, tuple)) and len(outer["edge_wall_color"]) == 4:
             cfg["edge_wall_color"] = [float(x) for x in outer["edge_wall_color"]]
+    except Exception:
+        pass
+    return cfg
+
+
+def _load_field_markings_config_from_match_config(
+    match_config_path: Path | None, field_size: tuple[float, float] | None
+) -> dict[str, object]:
+    field_len = float(field_size[0]) if field_size is not None else 14.0
+    field_wid = float(field_size[1]) if field_size is not None else 9.0
+    cfg: dict[str, object] = {
+        "enabled": False,
+        "line_width": 0.05,
+        "line_height": 0.001,
+        "color": [1.0, 1.0, 1.0, 1.0],
+        "field_length": field_len,
+        "field_width": field_wid,
+        "goal_area_depth": 1.0,
+        "goal_area_width": 3.0,
+        "penalty_area_depth": 2.0,
+        "penalty_area_width": 4.0,
+        "penalty_spot_distance": 1.5,
+        "center_circle_diameter": 1.5,
+    }
+    if match_config_path is None or not match_config_path.exists():
+        return cfg
+    try:
+        data = json.loads(match_config_path.read_text(encoding="utf-8"))
+        field_cfg = data.get("field", {}) if isinstance(data, dict) else {}
+        mk = field_cfg.get("markings", {})
+        if not isinstance(mk, dict):
+            return cfg
+        if "enabled" in mk:
+            cfg["enabled"] = bool(mk["enabled"])
+        if "line_width" in mk:
+            cfg["line_width"] = float(mk["line_width"])
+        if "line_height" in mk:
+            cfg["line_height"] = float(mk["line_height"])
+        if "color" in mk and isinstance(mk["color"], (list, tuple)) and len(mk["color"]) == 4:
+            cfg["color"] = [float(v) for v in mk["color"]]
+        if "field_length" in mk:
+            cfg["field_length"] = float(mk["field_length"])
+        if "field_width" in mk:
+            cfg["field_width"] = float(mk["field_width"])
+        if "goal_area_depth" in mk:
+            cfg["goal_area_depth"] = float(mk["goal_area_depth"])
+        if "goal_area_width" in mk:
+            cfg["goal_area_width"] = float(mk["goal_area_width"])
+        if "penalty_area_depth" in mk:
+            cfg["penalty_area_depth"] = float(mk["penalty_area_depth"])
+        if "penalty_area_width" in mk:
+            cfg["penalty_area_width"] = float(mk["penalty_area_width"])
+        if "penalty_spot_distance" in mk:
+            cfg["penalty_spot_distance"] = float(mk["penalty_spot_distance"])
+        if "center_circle_diameter" in mk:
+            cfg["center_circle_diameter"] = float(mk["center_circle_diameter"])
+    except Exception:
+        pass
+    return cfg
+
+
+def _load_referee_area_config_from_match_config(match_config_path: Path | None) -> dict[str, float]:
+    cfg = {"goalie_area_depth": 1.0, "goalie_area_width": 3.0}
+    if match_config_path is None or not match_config_path.exists():
+        return cfg
+    try:
+        data = json.loads(match_config_path.read_text(encoding="utf-8"))
+        field_cfg = data.get("field", {}) if isinstance(data, dict) else {}
+        ref_cfg = field_cfg.get("referee", {})
+        if isinstance(ref_cfg, dict):
+            if "goalie_area_depth" in ref_cfg:
+                cfg["goalie_area_depth"] = float(ref_cfg["goalie_area_depth"])
+            if "goalie_area_width" in ref_cfg:
+                cfg["goalie_area_width"] = float(ref_cfg["goalie_area_width"])
+        mk_cfg = field_cfg.get("markings", {})
+        if isinstance(mk_cfg, dict):
+            if "goal_area_depth" in mk_cfg:
+                cfg["goalie_area_depth"] = float(mk_cfg["goal_area_depth"])
+            if "goal_area_width" in mk_cfg:
+                cfg["goalie_area_width"] = float(mk_cfg["goal_area_width"])
     except Exception:
         pass
     return cfg
@@ -498,6 +579,112 @@ def _add_outer_floor_planes(
         )
 
 
+def _add_field_markings(
+    worldbody: ET.Element,
+    field_length: float,
+    field_width: float,
+    cfg: dict[str, object] | None = None,
+):
+    c = cfg if isinstance(cfg, dict) else {}
+    if not bool(c.get("enabled", False)):
+        return
+
+    line_w = max(0.005, float(c.get("line_width", 0.05)))
+    line_h = max(0.0002, float(c.get("line_height", 0.001)))
+    rgba = c.get("color", [1.0, 1.0, 1.0, 1.0])
+    if not isinstance(rgba, (list, tuple)) or len(rgba) != 4:
+        rgba = [1.0, 1.0, 1.0, 1.0]
+    rgba_str = " ".join(f"{float(v):g}" for v in rgba)
+
+    mark_len = max(0.1, float(c.get("field_length", field_length)))
+    mark_wid = max(0.1, float(c.get("field_width", field_width)))
+    half_len = 0.5 * mark_len
+    half_wid = 0.5 * mark_wid
+    half_lw = 0.5 * line_w
+    z = line_h
+    half_h = 0.5 * line_h
+
+    def add_line_box(name: str, x: float, y: float, sx: float, sy: float):
+        ET.SubElement(
+            worldbody,
+            "geom",
+            name=name,
+            type="box",
+            pos=f"{x:g} {y:g} {z:g}",
+            size=f"{max(half_lw, sx):g} {max(half_lw, sy):g} {half_h:g}",
+            rgba=rgba_str,
+            contype="0",
+            conaffinity="0",
+        )
+
+    # Boundary and center line
+    add_line_box("line-boundary-top", 0.0, half_wid, half_len, half_lw)
+    add_line_box("line-boundary-bottom", 0.0, -half_wid, half_len, half_lw)
+    add_line_box("line-boundary-left", -half_len, 0.0, half_lw, half_wid)
+    add_line_box("line-boundary-right", half_len, 0.0, half_lw, half_wid)
+    add_line_box("line-center", 0.0, 0.0, half_lw, half_wid)
+
+    goal_area_depth = max(0.05, float(c.get("goal_area_depth", 1.0)))
+    goal_area_width = max(line_w, float(c.get("goal_area_width", 3.0)))
+    penalty_area_depth = max(0.05, float(c.get("penalty_area_depth", 2.0)))
+    penalty_area_width = max(line_w, float(c.get("penalty_area_width", 4.0)))
+
+    for side, sgn in (("left", -1.0), ("right", 1.0)):
+        for prefix, depth, box_w in (
+            ("goal-area", goal_area_depth, goal_area_width),
+            ("penalty-area", penalty_area_depth, penalty_area_width),
+        ):
+            x_outer = sgn * half_len
+            x_inner = sgn * (half_len - depth)
+            y_half = 0.5 * box_w
+            y_half = min(y_half, half_wid)
+
+            add_line_box(f"line-{prefix}-{side}-outer", x_outer, 0.0, half_lw, y_half)
+            add_line_box(f"line-{prefix}-{side}-inner", x_inner, 0.0, half_lw, y_half)
+            add_line_box(f"line-{prefix}-{side}-top", 0.5 * (x_outer + x_inner), y_half, 0.5 * depth, half_lw)
+            add_line_box(f"line-{prefix}-{side}-bottom", 0.5 * (x_outer + x_inner), -y_half, 0.5 * depth, half_lw)
+
+    spot_dist = max(0.05, float(c.get("penalty_spot_distance", 1.5)))
+    spot_r = max(0.02, 0.5 * line_w)
+    for side, sgn in (("left", -1.0), ("right", 1.0)):
+        x_spot = sgn * (half_len - spot_dist)
+        ET.SubElement(
+            worldbody,
+            "geom",
+            name=f"line-penalty-spot-{side}",
+            type="cylinder",
+            pos=f"{x_spot:g} 0 {half_h:g}",
+            size=f"{spot_r:g} {line_h:g}",
+            rgba=rgba_str,
+            contype="0",
+            conaffinity="0",
+        )
+
+    circle_d = max(0.1, float(c.get("center_circle_diameter", 1.5)))
+    circle_r = 0.5 * circle_d
+    seg_n = 48
+    # Slight overlap between adjacent segments avoids tiny visual gaps.
+    seg_len = (2.0 * math.pi * circle_r / seg_n) * 1.08
+    for i in range(seg_n):
+        theta = (2.0 * math.pi * i) / seg_n
+        x = circle_r * math.cos(theta)
+        y = circle_r * math.sin(theta)
+        # Align each short box with circle tangent, not radius.
+        tangent_theta = theta + 0.5 * math.pi
+        ET.SubElement(
+            worldbody,
+            "geom",
+            name=f"line-center-circle-{i}",
+            type="box",
+            pos=f"{x:g} {y:g} {z:g}",
+            quat=f"{math.cos(0.5 * tangent_theta):g} 0 0 {math.sin(0.5 * tangent_theta):g}",
+            size=f"{0.5 * seg_len:g} {half_lw:g} {half_h:g}",
+            rgba=rgba_str,
+            contype="0",
+            conaffinity="0",
+        )
+
+
 def _build_multi_robot_soccer_scene_xml(
     robot_xml: Path,
     soccer_world_xml: Path,
@@ -508,6 +695,7 @@ def _build_multi_robot_soccer_scene_xml(
     target_field_size: tuple[float, float] | None = None,
     goal_cfg: dict[str, float] | None = None,
     outer_floor_cfg: dict[str, object] | None = None,
+    field_markings_cfg: dict[str, object] | None = None,
 ) -> tuple[Path, list[int]]:
     meshdir = robot_xml.parent / "meshes"
     robot_root = ET.fromstring(robot_xml.read_text(encoding="utf-8"))
@@ -609,9 +797,13 @@ def _build_multi_robot_soccer_scene_xml(
                 copied.set("friction", "1.0 0.2 0.03")
                 copied.set("solref", "0.001 1")
                 copied.set("solimp", "0.9 0.95 0.001")
+                # Use flat color instead of texture so field markings stay controllable and clear.
+                copied.attrib.pop("material", None)
+                copied.set("rgba", "0.18 0.45 0.18 1")
             worldbody.append(copied)
 
     _add_outer_floor_planes(worldbody, field_length=out_field_len, field_width=out_field_wid, cfg=outer_floor_cfg)
+    _add_field_markings(worldbody, field_length=out_field_len, field_width=out_field_wid, cfg=field_markings_cfg)
 
     g = goal_cfg if isinstance(goal_cfg, dict) else {}
     _add_procedural_goals(
@@ -695,6 +887,8 @@ class MultiRobotMujocoSim:
         self._goal_width = float(goal_cfg.get("width", 2.6))
         self._goal_height = float(goal_cfg.get("height", 1.8))
         outer_floor_cfg = _load_outer_floor_config_from_match_config(args.match_config)
+        field_markings_cfg = _load_field_markings_config_from_match_config(args.match_config, field_size)
+        referee_area_cfg = _load_referee_area_config_from_match_config(args.match_config)
         scene_xml, _ = _build_multi_robot_soccer_scene_xml(
             args.robot_xml,
             args.soccer_world_xml,
@@ -705,6 +899,7 @@ class MultiRobotMujocoSim:
             target_field_size=field_size,
             goal_cfg=goal_cfg,
             outer_floor_cfg=outer_floor_cfg,
+            field_markings_cfg=field_markings_cfg,
         )
 
         self.model = mujoco.MjModel.from_xml_path(str(scene_xml))
@@ -725,6 +920,7 @@ class MultiRobotMujocoSim:
         self.policy = self._load_policy(args.policy)
 
         self.robot_specs: dict[int, RobotSpec] = self._build_robot_specs()
+        self._apply_team_body_colors()
         if self.robot_specs:
             sample_spec = next(iter(self.robot_specs.values()))
             expected_obs_dim = len(sample_spec.obs_history)
@@ -762,11 +958,16 @@ class MultiRobotMujocoSim:
         self.use_referee = bool(args.use_referee)
         self.referee: MujocoSoccerReferee | None = None
         if self.use_referee:
+            goalie_area_depth = float(referee_area_cfg.get("goalie_area_depth", 1.0))
+            goalie_area_width = float(referee_area_cfg.get("goalie_area_width", 3.0))
+            goalie_area_extra_width = max(0.0, 0.5 * (goalie_area_width - self._goal_width))
             self.referee = MujocoSoccerReferee(
                 field_length=self._field_length,
                 field_width=self._field_width,
                 goal_width=self._goal_width,
                 goal_height=self._goal_height,
+                goalie_area_depth=goalie_area_depth,
+                goalie_area_extra_width=goalie_area_extra_width,
                 red_count=self.max_red_robots,
                 blue_count=self.max_blue_robots,
             )
@@ -775,6 +976,66 @@ class MultiRobotMujocoSim:
             print("[MultiRobotMujocoSim] referee: disabled")
 
         self._web_camera = None
+
+    def _apply_team_body_colors(self) -> None:
+        """
+        Tint only robot upper-body geoms (excluding head) by team color.
+        Robot prefixes are:
+          - red:  robot_rp*
+          - blue: robot_bp*
+        This is a visual-only change and does not affect physics.
+        """
+        red_rgba = np.array([0.92, 0.22, 0.22, 1.0], dtype=np.float32)
+        blue_rgba = np.array([0.23, 0.40, 0.92, 1.0], dtype=np.float32)
+        colored = 0
+        skipped_head = 0
+        skipped_non_upper = 0
+        skipped_unknown = 0
+
+        # Vest-style tint: central torso only (no arms/legs/head).
+        upper_tokens = ("trunk", "torso", "chest", "waist", "pelvis", "base", "body")
+        head_tokens = ("head", "camera", "zed", "neck")
+        lower_body_tokens = ("hip", "thigh", "knee", "ankle", "foot", "shank", "calf", "leg")
+
+        for gid in range(self.model.ngeom):
+            gname = mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_GEOM, gid)
+            bid = int(self.model.geom_bodyid[gid])
+            bname = mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_BODY, bid) or ""
+            name_for_team = gname or bname
+            if not name_for_team:
+                skipped_unknown += 1
+                continue
+            target = None
+            if name_for_team.startswith("robot_rp"):
+                target = red_rgba
+            elif name_for_team.startswith("robot_bp"):
+                target = blue_rgba
+            if target is None:
+                continue
+
+            # Prefer body name for part classification; fallback to geom name.
+            part_name = (bname or gname or "").lower()
+            if any(tok in part_name for tok in head_tokens):
+                skipped_head += 1
+                continue
+            if any(tok in part_name for tok in lower_body_tokens):
+                skipped_non_upper += 1
+                continue
+            if not any(tok in part_name for tok in upper_tokens):
+                skipped_non_upper += 1
+                continue
+
+            # Keep original alpha so transparent parts remain transparent.
+            old_alpha = float(self.model.geom_rgba[gid, 3])
+            self.model.geom_rgba[gid, :3] = target[:3]
+            self.model.geom_rgba[gid, 3] = old_alpha
+            colored += 1
+
+        print(
+            "[MultiRobotMujocoSim] team color tint applied to "
+            f"{colored} upper-body geoms (head skipped={skipped_head}, "
+            f"other skipped={skipped_non_upper}, unknown={skipped_unknown})"
+        )
 
     @staticmethod
     def _active_ids_from_limits(max_red: int, max_blue: int) -> list[int]:
@@ -933,14 +1194,9 @@ class MultiRobotMujocoSim:
         self.last_msg_info = {"timestamp": ts, "id": int(robot_id), "source": str(source)}
 
     def _is_command_allowed(self, robot_id: int) -> bool:
-        if self.referee is None:
-            return True
-        pm = self.referee.play_mode
-        is_left = robot_id < MAX_ROBOTS_PER_TEAM
-        if pm in ("KickOff_Left", "KickIn_Left", "corner_kick_left", "goal_kick_left", "free_kick_left"):
-            return bool(is_left)
-        if pm in ("KickOff_Right", "KickIn_Right", "corner_kick_right", "goal_kick_right", "free_kick_right"):
-            return bool(not is_left)
+        # User policy: never block either team commands by play mode.
+        # Referee remains active for game state/ball placement, but command gating is disabled.
+        _ = robot_id
         return True
 
     def _obs_for_robot(self, spec: RobotSpec, cmd_override: np.ndarray | None = None) -> np.ndarray:
@@ -987,6 +1243,9 @@ class MultiRobotMujocoSim:
             debug_rid = next(iter(self.robot_specs.keys()), None)
         debug_obs = None
         debug_act = None
+        infer_specs: list[RobotSpec] = []
+        infer_obs: list[np.ndarray] = []
+        default_cmd = np.asarray(DEFAULT_CMD, dtype=np.float32)
 
         for spec in self.robot_specs.values():
             if self._is_robot_protected(spec.rid):
@@ -994,27 +1253,38 @@ class MultiRobotMujocoSim:
                 spec.filtered_dof_target[:] = spec.init_angles
                 spec.target_joint_pos[:] = spec.init_angles
                 continue
+
             zero_left = self._robot_cmd_zero_frames_left.get(spec.rid, 0)
             if zero_left > 0:
-                obs = self._obs_for_robot(spec, cmd_override=np.array(DEFAULT_CMD, dtype=np.float32))
+                obs = self._obs_for_robot(spec, cmd_override=default_cmd)
                 self._robot_cmd_zero_frames_left[spec.rid] = zero_left - 1
             else:
                 obs = self._obs_for_robot(spec)
+
+            infer_specs.append(spec)
+            infer_obs.append(obs)
+
+        if infer_specs:
+            obs_batch = np.stack(infer_obs, axis=0).astype(np.float32, copy=False)
             with torch.inference_mode():
-                obs_tensor = torch.from_numpy(obs).unsqueeze(0).to(self.policy_device)
-                act = self.policy(obs_tensor).detach().cpu().numpy().squeeze().astype(np.float32)
-            act = np.nan_to_num(act, nan=0.0, posinf=0.0, neginf=0.0)
-            if spec.rid == debug_rid:
-                debug_obs = obs.copy()
-                debug_act = act.copy()
-            spec.last_action[:] = act
-            act_scaled = np.clip(act * spec.action_scale, ACTION_CLIP[0], ACTION_CLIP[1])
-            joint_pos_action = spec.init_angles + act_scaled
-            if ACTION_SMOOTH_FILTER:
-                spec.filtered_dof_target[:] = spec.filtered_dof_target * 0.2 + joint_pos_action * 0.8
-            else:
-                spec.filtered_dof_target[:] = joint_pos_action
-            spec.target_joint_pos[:] = spec.filtered_dof_target
+                obs_tensor = torch.from_numpy(obs_batch).to(self.policy_device)
+                act_batch = self.policy(obs_tensor).detach().cpu().numpy().astype(np.float32, copy=False)
+            if act_batch.ndim == 1:
+                act_batch = act_batch.reshape(1, -1)
+
+            for i, spec in enumerate(infer_specs):
+                act = np.nan_to_num(act_batch[i], nan=0.0, posinf=0.0, neginf=0.0)
+                if spec.rid == debug_rid:
+                    debug_obs = infer_obs[i].copy()
+                    debug_act = act.copy()
+                spec.last_action[:] = act
+                act_scaled = np.clip(act * spec.action_scale, ACTION_CLIP[0], ACTION_CLIP[1])
+                joint_pos_action = spec.init_angles + act_scaled
+                if ACTION_SMOOTH_FILTER:
+                    spec.filtered_dof_target[:] = spec.filtered_dof_target * 0.2 + joint_pos_action * 0.8
+                else:
+                    spec.filtered_dof_target[:] = joint_pos_action
+                spec.target_joint_pos[:] = spec.filtered_dof_target
 
         if (
             not self._printed_target_policy_io
@@ -1335,7 +1605,7 @@ class MultiRobotMujocoSim:
                     "cmd_vel": [0.0, 0.0, 0.0],
                 }
 
-        ball_x, ball_y, ball_z = 0.0, 0.0, 0.11
+        ball_x, ball_y, ball_z = 0.0, 0.0, 0.075
         bid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "ball")
         if bid >= 0:
             ball_x = float(self.data.xpos[bid][0])
@@ -1365,7 +1635,7 @@ class MultiRobotMujocoSim:
                 }
             )
 
-        ball_x, ball_y, ball_z = 0.0, 0.0, 0.11
+        ball_x, ball_y, ball_z = 0.0, 0.0, 0.075
         bid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "ball")
         if bid >= 0:
             ball_x, ball_y, ball_z = (float(v) for v in self.data.xpos[bid])
@@ -1550,9 +1820,10 @@ class MultiRobotMujocoSim:
                         webview.emit_robot_states(self.state_for_web())
                         next_state_emit_time = now + state_emit_interval
 
-                wait_time = self.model.opt.timestep - (time.time() - step_start)
-                if wait_time > 0:
-                    time.sleep(wait_time)
+                if self.args.real_time:
+                    wait_time = self.model.opt.timestep - (time.time() - step_start)
+                    if wait_time > 0:
+                        time.sleep(wait_time)
         finally:
             socket.close()
             context.term()

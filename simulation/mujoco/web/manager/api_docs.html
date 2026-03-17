@@ -34,7 +34,8 @@
           <tr><td>POST</td><td><code>/sims/start</code></td><td>start one mujoco simulation process</td></tr>
           <tr><td>GET</td><td><code>/sims</code></td><td>scan current simulation processes and mark managed/external</td></tr>
           <tr><td>POST</td><td><code>/sims/stop</code></td><td>stop one scanned simulation by pid</td></tr>
-          <tr><td>POST</td><td><code>/sims/stop-external</code></td><td>stop all scanned external simulations</td></tr>
+          <tr><td>POST</td><td><code>/sims/stop-all</code></td><td>stop all scanned simulations (managed + external)</td></tr>
+          <tr><td>POST</td><td><code>/sims/stop-external</code></td><td>backward-compatible alias of <code>/sims/stop-all</code></td></tr>
           <tr><td>GET</td><td><code>/manager/docs</code></td><td>this api docs page</td></tr>
         </tbody>
       </table>
@@ -68,7 +69,7 @@
 <pre>curl -X POST http://127.0.0.1:8000/sims/stop \
   -H "Content-Type: application/json" \
   -d '{"pid":12345}'</pre>
-<pre>curl -X POST http://127.0.0.1:8000/sims/stop-external</pre>
+<pre>curl -X POST http://127.0.0.1:8000/sims/stop-all</pre>
     </div>
   </div>
 </body>

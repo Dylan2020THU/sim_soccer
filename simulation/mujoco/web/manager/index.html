@@ -100,7 +100,7 @@
         </label>
         <div class="actions">
           <button class="danger" onclick="stopPid()">Stop PID</button>
-          <button class="danger" onclick="stopExternal()">Stop External</button>
+          <button class="danger" onclick="stopAll()">Stop All</button>
         </div>
         <details id="decider_cmds_panel" class="cmd-box">
           <summary>Decider Commands</summary>
@@ -133,7 +133,7 @@
         <div style="margin-top:10px; font-size:13px; color:#374151; line-height:1.6;">
           <div>1. 在 <b>Start Simulation</b> 设置参数后点击 <b>Start</b>。端口可留空，系统会自动分配。</div>
           <div>2. 点击 <b>Refresh</b> 或等待自动刷新，在 <b>Scanned Sim Processes</b> 查看进程、ZMQ 端口、队伍人数与 WebView 链接。</div>
-          <div>3. 在 <b>Process Control</b> 选择 PID 后，点击 <b>Stop PID</b> 可停止单个仿真；点击 <b>Stop External</b> 可停止外部仿真。</div>
+          <div>3. 在 <b>Process Control</b> 选择 PID 后，点击 <b>Stop PID</b> 可停止单个仿真；点击 <b>Stop All</b> 可停止全部仿真。</div>
           <div>4. 选择 PID 后展开 <b>Decider Commands</b>，可复制每个机器人的 decider 启动命令。</div>
           <div>5. 页面底部 <b>Logs</b> 会显示启动和停止操作结果。</div>
         </div>
@@ -231,9 +231,9 @@
       }
     }
 
-    async function stopExternal() {
+    async function stopAll() {
       try {
-        const res = await req("/sims/stop-external", "POST", {});
+        const res = await req("/sims/stop-all", "POST", {});
         setText("stop_status", res);
         await scanSims();
       } catch (e) {

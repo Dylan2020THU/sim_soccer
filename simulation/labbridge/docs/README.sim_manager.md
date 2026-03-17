@@ -27,7 +27,8 @@
 - `POST /sims/start`
 - `GET /sims`
 - `POST /sims/stop`
-- `POST /sims/stop-external`
+- `POST /sims/stop-all`
+- `POST /sims/stop-external`（兼容别名，行为同 `stop-all`）
 
 `POST /sims/start` 支持 `policy_device` 参数（`gpu`/`cpu`，默认 `gpu`）。
 当传 `gpu` 但机器无 CUDA 时，MuJoCo 会自动回退到 `cpu` 推理。
