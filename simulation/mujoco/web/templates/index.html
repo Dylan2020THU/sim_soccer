@@ -648,13 +648,46 @@
         const canvas = document.getElementById('minimap');
         const ctx = canvas.getContext('2d');
 
-        // Field Settings (Scaled for smaller canvas)
-        const FIELD_WIDTH_M = 16.0;
-        const FIELD_HEIGHT_M = 10.0;
-        const SCALE_X = canvas.width / FIELD_WIDTH_M;
-        const SCALE_Y = canvas.height / FIELD_HEIGHT_M;
+        // Field Settings (dynamic from simulator _field metadata)
+        let mapCfg = {
+            worldLength: 16.0,
+            worldWidth: 10.0,
+            fieldLength: 14.0,
+            fieldWidth: 9.0,
+            centerCircleDiameter: 1.5,
+            lineWidth: 0.05,
+            goalAreaDepth: 1.0,
+            goalAreaWidth: 3.0,
+            penaltyAreaDepth: 2.0,
+            penaltyAreaWidth: 4.0,
+            penaltySpotDistance: 1.5,
+        };
+        let SCALE_X = canvas.width / mapCfg.worldLength;
+        let SCALE_Y = canvas.height / mapCfg.worldWidth;
         const CENTER_X = canvas.width / 2;
         const CENTER_Y = canvas.height / 2;
+
+        function refreshMapScale() {
+            SCALE_X = canvas.width / Math.max(1e-6, mapCfg.worldLength);
+            SCALE_Y = canvas.height / Math.max(1e-6, mapCfg.worldWidth);
+        }
+
+        function applyFieldMeta(meta) {
+            if (!meta) return;
+            const markings = meta.markings || {};
+            mapCfg.worldLength = Number(meta.world_length ?? mapCfg.worldLength);
+            mapCfg.worldWidth = Number(meta.world_width ?? mapCfg.worldWidth);
+            mapCfg.fieldLength = Number(meta.field_length ?? mapCfg.fieldLength);
+            mapCfg.fieldWidth = Number(meta.field_width ?? mapCfg.fieldWidth);
+            mapCfg.centerCircleDiameter = Number(markings.center_circle_diameter ?? mapCfg.centerCircleDiameter);
+            mapCfg.lineWidth = Number(markings.line_width ?? mapCfg.lineWidth);
+            mapCfg.goalAreaDepth = Number(markings.goal_area_depth ?? mapCfg.goalAreaDepth);
+            mapCfg.goalAreaWidth = Number(markings.goal_area_width ?? mapCfg.goalAreaWidth);
+            mapCfg.penaltyAreaDepth = Number(markings.penalty_area_depth ?? mapCfg.penaltyAreaDepth);
+            mapCfg.penaltyAreaWidth = Number(markings.penalty_area_width ?? mapCfg.penaltyAreaWidth);
+            mapCfg.penaltySpotDistance = Number(markings.penalty_spot_distance ?? mapCfg.penaltySpotDistance);
+            refreshMapScale();
+        }
 
         // Entities State
         let entities = [
@@ -782,10 +815,78 @@
 
         function drawMinimap() {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
-            // Draw field 
-            ctx.strokeStyle = "rgba(255, 255, 255, 0.5)"; ctx.lineWidth = 2;
-            ctx.beginPath(); ctx.moveTo(CENTER_X, 0); ctx.lineTo(CENTER_X, canvas.height); ctx.stroke();
-            ctx.beginPath(); ctx.moveTo(0, CENTER_Y); ctx.lineTo(canvas.width, CENTER_Y); ctx.stroke();
+
+            // Draw pitch markings
+            const halfLen = mapCfg.fieldLength * 0.5;
+            const halfWid = mapCfg.fieldWidth * 0.5;
+            const linePx = Math.max(1.0, mapCfg.lineWidth * Math.min(SCALE_X, SCALE_Y));
+            ctx.strokeStyle = "rgba(255, 255, 255, 0.85)";
+            ctx.fillStyle = "rgba(255, 255, 255, 0.85)";
+            ctx.lineWidth = linePx;
+
+            const pTL = toScreen(-halfLen, halfWid);
+            const pTR = toScreen(halfLen, halfWid);
+            const pBL = toScreen(-halfLen, -halfWid);
+            const pBR = toScreen(halfLen, -halfWid);
+
+            // Outer boundary
+            ctx.beginPath();
+            ctx.moveTo(pTL.x, pTL.y);
+            ctx.lineTo(pTR.x, pTR.y);
+            ctx.lineTo(pBR.x, pBR.y);
+            ctx.lineTo(pBL.x, pBL.y);
+            ctx.closePath();
+            ctx.stroke();
+
+            // Halfway line
+            const pHalfTop = toScreen(0, halfWid);
+            const pHalfBot = toScreen(0, -halfWid);
+            ctx.beginPath();
+            ctx.moveTo(pHalfTop.x, pHalfTop.y);
+            ctx.lineTo(pHalfBot.x, pHalfBot.y);
+            ctx.stroke();
+
+            // Center circle + center mark
+            const c = toScreen(0, 0);
+            const rX = (mapCfg.centerCircleDiameter * 0.5) * SCALE_X;
+            const rY = (mapCfg.centerCircleDiameter * 0.5) * SCALE_Y;
+            ctx.beginPath();
+            ctx.ellipse(c.x, c.y, rX, rY, 0, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.arc(c.x, c.y, Math.max(2, linePx * 1.1), 0, Math.PI * 2);
+            ctx.fill();
+
+            // Penalty / goal areas (left and right)
+            function drawArea(xEdgeSign, depth, width) {
+                const x0 = xEdgeSign > 0 ? halfLen - depth : -halfLen;
+                const x1 = xEdgeSign > 0 ? halfLen : -halfLen + depth;
+                const y0 = width * 0.5;
+                const y1 = -width * 0.5;
+                const a = toScreen(x0, y0);
+                const b = toScreen(x1, y0);
+                const d = toScreen(x0, y1);
+                const e = toScreen(x1, y1);
+                ctx.beginPath();
+                ctx.moveTo(a.x, a.y);
+                ctx.lineTo(b.x, b.y);
+                ctx.lineTo(e.x, e.y);
+                ctx.lineTo(d.x, d.y);
+                ctx.closePath();
+                ctx.stroke();
+            }
+            drawArea(-1, mapCfg.penaltyAreaDepth, mapCfg.penaltyAreaWidth);
+            drawArea(1, mapCfg.penaltyAreaDepth, mapCfg.penaltyAreaWidth);
+            drawArea(-1, mapCfg.goalAreaDepth, mapCfg.goalAreaWidth);
+            drawArea(1, mapCfg.goalAreaDepth, mapCfg.goalAreaWidth);
+
+            // Penalty spots
+            const lSpot = toScreen(-halfLen + mapCfg.penaltySpotDistance, 0);
+            const rSpot = toScreen(halfLen - mapCfg.penaltySpotDistance, 0);
+            ctx.beginPath();
+            ctx.arc(lSpot.x, lSpot.y, Math.max(2, linePx * 1.1), 0, Math.PI * 2);
+            ctx.arc(rSpot.x, rSpot.y, Math.max(2, linePx * 1.1), 0, Math.PI * 2);
+            ctx.fill();
 
             // Draw Entities
             entities.forEach(ent => {
@@ -884,6 +985,11 @@
         });
 
         // --- Robot States Sync from Backend ---
+        socket.on('field_meta', function (meta) {
+            applyFieldMeta(meta);
+            drawMinimap();
+        });
+
         socket.on('robot_states', function (states) {
             // Handle Metadata first
             if (states._last_msg) {

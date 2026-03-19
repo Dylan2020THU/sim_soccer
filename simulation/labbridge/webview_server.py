@@ -34,6 +34,7 @@ class LabWebView:
         self.socketio = SocketIO(self.app, cors_allowed_origins="*")
         self.msg = WebMsgBuffer()
         self.allow_keyboard_control = bool(allow_keyboard_control)
+        self._field_meta: dict | None = None
         self._setup_routes_and_events()
 
     def _setup_routes_and_events(self):
@@ -44,6 +45,8 @@ class LabWebView:
         @self.socketio.on("connect")
         def on_connect():
             print("[LabWebView] Client connected")
+            if self._field_meta is not None:
+                self.socketio.emit("field_meta", self._field_meta)
 
         @self.socketio.on("reset_env")
         def on_reset():
@@ -142,6 +145,9 @@ class LabWebView:
 
     def emit_robot_states(self, states: dict):
         self.socketio.emit("robot_states", states)
+
+    def set_field_meta(self, field_meta: dict):
+        self._field_meta = dict(field_meta)
 
 
 # Backward-compatible alias for existing callers.

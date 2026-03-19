@@ -954,6 +954,14 @@ class MultiRobotMujocoSim:
         self._goal_height = float(goal_cfg.get("height", 1.8))
         outer_floor_cfg = _load_outer_floor_config_from_match_config(args.match_config)
         field_markings_cfg = _load_field_markings_config_from_match_config(args.match_config, field_size)
+        self._field_markings_cfg = dict(field_markings_cfg)
+        self._outer_floor_cfg = dict(outer_floor_cfg)
+        ratio = float(self._outer_floor_cfg.get("margin_ratio", 0.05))
+        min_margin = float(self._outer_floor_cfg.get("min_margin", 1.0))
+        margin_x = max(min_margin, 0.5 * self._field_length * ratio)
+        margin_y = max(min_margin, 0.5 * self._field_width * ratio)
+        self._world_length = float(self._field_length + 4.0 * margin_x)
+        self._world_width = float(self._field_width + 4.0 * margin_y)
         referee_area_cfg = _load_referee_area_config_from_match_config(args.match_config)
         scene_xml, _ = _build_multi_robot_soccer_scene_xml(
             args.robot_xml,
@@ -2058,6 +2066,23 @@ def run_sim(args: RuntimeArgs, template_dir: Path):
             allow_keyboard_control=args.allow_keyboard_control,
         )
         webview.start(port=args.webview_port)
+        webview.set_field_meta(
+            {
+                "world_length": sim._world_length,
+                "world_width": sim._world_width,
+                "field_length": sim._field_length,
+                "field_width": sim._field_width,
+                "markings": {
+                    "center_circle_diameter": float(sim._field_markings_cfg.get("center_circle_diameter", 1.5)),
+                    "line_width": float(sim._field_markings_cfg.get("line_width", 0.05)),
+                    "goal_area_depth": float(sim._field_markings_cfg.get("goal_area_depth", 1.0)),
+                    "goal_area_width": float(sim._field_markings_cfg.get("goal_area_width", 3.0)),
+                    "penalty_area_depth": float(sim._field_markings_cfg.get("penalty_area_depth", 2.0)),
+                    "penalty_area_width": float(sim._field_markings_cfg.get("penalty_area_width", 4.0)),
+                    "penalty_spot_distance": float(sim._field_markings_cfg.get("penalty_spot_distance", 1.5)),
+                },
+            }
+        )
         print(f"[MujocoWebView] Started at http://localhost:{args.webview_port}")
 
     if not args.zmq:
