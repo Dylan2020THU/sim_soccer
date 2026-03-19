@@ -324,6 +324,99 @@
             return `(${Number(a).toFixed(2)}, ${Number(b).toFixed(2)}, ${Number(c).toFixed(2)})`;
         }
 
+        function escapeHtml(text) {
+            return String(text)
+                .replaceAll('&', '&amp;')
+                .replaceAll('<', '&lt;')
+                .replaceAll('>', '&gt;')
+                .replaceAll('"', '&quot;')
+                .replaceAll("'", '&#39;');
+        }
+
+        function updateVelocityHistory(states) {
+            const now = Date.now();
+            const activeRobotNames = new Set();
+            Object.keys(states)
+                .filter(name => name !== '_last_msg' && name !== 'ball' && states[name] && states[name].active)
+                .forEach((name) => {
+                    const s = states[name];
+                    const cmd = s.cmd_vel || [0.0, 0.0, 0.0];
+                    const vx = Number(cmd[0]) || 0.0;
+                    const vy = Number(cmd[1]) || 0.0;
+                    const wz = Number(cmd[2]) || 0.0;
+                    if (!velocityHistories[name]) velocityHistories[name] = [];
+                    velocityHistories[name].push({ t: now, vx, vy, wz });
+                    if (velocityHistories[name].length > VELOCITY_HISTORY_MAX_POINTS) {
+                        velocityHistories[name].splice(0, velocityHistories[name].length - VELOCITY_HISTORY_MAX_POINTS);
+                    }
+                    activeRobotNames.add(name);
+                });
+            Object.keys(velocityHistories).forEach((name) => {
+                if (!activeRobotNames.has(name)) {
+                    delete velocityHistories[name];
+                }
+            });
+        }
+
+        function pointsForSeries(samples, key, maxAbs, width, height) {
+            if (!samples || samples.length < 2) return '';
+            const denom = Math.max(maxAbs, 1e-6);
+            const out = [];
+            const n = samples.length;
+            for (let i = 0; i < n; i++) {
+                const x = (i / (n - 1)) * width;
+                const v = Number(samples[i][key]) || 0.0;
+                const y = height - ((v + denom) / (2 * denom)) * height;
+                out.push(`${x.toFixed(1)},${y.toFixed(1)}`);
+            }
+            return out.join(' ');
+        }
+
+        function buildVelocityChartSvg(name, cmd) {
+            const samples = velocityHistories[name] || [];
+            if (samples.length < 2) {
+                return '<div class="velocity-chart-empty">Waiting history...</div>';
+            }
+            let maxAbs = 0.0;
+            for (let i = 0; i < samples.length; i++) {
+                maxAbs = Math.max(maxAbs, Math.abs(samples[i].vx), Math.abs(samples[i].vy), Math.abs(samples[i].wz));
+            }
+            maxAbs = Math.max(
+                maxAbs,
+                Math.abs(Number(cmd[0]) || 0.0),
+                Math.abs(Number(cmd[1]) || 0.0),
+                Math.abs(Number(cmd[2]) || 0.0),
+                0.1
+            );
+
+            const width = 232;
+            const height = 64;
+            const vxPts = pointsForSeries(samples, 'vx', maxAbs, width, height);
+            const vyPts = pointsForSeries(samples, 'vy', maxAbs, width, height);
+            const wzPts = pointsForSeries(samples, 'wz', maxAbs, width, height);
+            const zeroY = (height * 0.5).toFixed(1);
+            const latestVx = samples[samples.length - 1].vx;
+            const latestVy = samples[samples.length - 1].vy;
+            const latestWz = samples[samples.length - 1].wz;
+
+            return `
+                <div class="velocity-chart-wrap">
+                    <svg class="velocity-chart" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none">
+                        <line x1="0" y1="${zeroY}" x2="${width}" y2="${zeroY}" class="velocity-zero-line"></line>
+                        <polyline points="${vxPts}" class="velocity-line-vx"></polyline>
+                        <polyline points="${vyPts}" class="velocity-line-vy"></polyline>
+                        <polyline points="${wzPts}" class="velocity-line-wz"></polyline>
+                    </svg>
+                    <div class="velocity-chart-legend">
+                        <span><i class="legend-dot vx"></i>vx ${latestVx.toFixed(2)}</span>
+                        <span><i class="legend-dot vy"></i>vy ${latestVy.toFixed(2)}</span>
+                        <span><i class="legend-dot wz"></i>wz ${latestWz.toFixed(2)}</span>
+                        <span class="legend-scale">±${maxAbs.toFixed(2)}</span>
+                    </div>
+                </div>
+            `;
+        }
+
         function renderVelocityInformation() {
             const panel = document.getElementById('velocity-info-content');
             if (!panel) return;
@@ -336,8 +429,17 @@
             robotNames.forEach((name) => {
                 const s = latestStates[name];
                 const cmd = s.cmd_vel || [0.0, 0.0, 0.0];
+                const safeName = escapeHtml(name);
+                const chartHtml = buildVelocityChartSvg(name, cmd);
                 rows.push(
-                    `<div class="velocity-info-row"><span class="velocity-info-name">${name}</span><span>cmd_vel ${fmt3(cmd[0], cmd[1], cmd[2])}</span><span>pos ${fmt3(s.x || 0, s.y || 0, s.yaw || 0)}</span></div>`
+                    `<div class="velocity-info-row">
+                        <div class="velocity-info-head">
+                            <span class="velocity-info-name">${safeName}</span>
+                            <span>cmd_vel ${fmt3(cmd[0], cmd[1], cmd[2])}</span>
+                            <span>pos ${fmt3(s.x || 0, s.y || 0, s.yaw || 0)}</span>
+                        </div>
+                        ${chartHtml}
+                    </div>`
                 );
             });
 
@@ -563,6 +665,8 @@
         let velocityInputDrafts = {};
         let velocityRobotNames = [];
         let velocityControlsLocked = false;
+        const VELOCITY_HISTORY_MAX_POINTS = 120;
+        let velocityHistories = {};
         const KEYBOARD_LIMITS = { vx: 1.5, vy: 1.0, wz: 3.0 };
         let keyboardPressed = new Set();
         let keyboardEnabled = false;
@@ -649,6 +753,7 @@
         // Initialize with all fixed IDs (0-13) for stable map entity ids.
         function initEntities() {
             entities = [{ name: 'ball', x: 0, y: 0, theta: 0, r: 6, color: 'white', team: 'none', active: true }];
+            velocityHistories = {};
             for (let i = 0; i < 7; i++) {
                 entities.push({ name: `robot_rp${i}`, x: -2.0, y: i * 0.5 - 1.5, theta: 0, r: 8, color: 'red', team: 'red', active: false });
                 entities.push({ name: `robot_bp${i}`, x: 2.0, y: i * 0.5 - 1.5, theta: 3.14, r: 8, color: 'blue', team: 'blue', active: false });
@@ -803,6 +908,7 @@
             }
             renderRefereeStatus();
             latestStates = states;
+            updateVelocityHistory(states);
             renderVelocityInformation();
 
             const syncEnabled = document.getElementById('sync-from-sim').checked;
@@ -1049,17 +1155,110 @@
 
         .velocity-info-row {
             display: flex;
-            gap: 10px;
-            flex-wrap: wrap;
+            flex-direction: column;
+            gap: 6px;
             border: 1px solid #e9ecef;
             border-radius: 6px;
             padding: 6px 8px;
             background: #fbfcfd;
         }
 
+        .velocity-info-head {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
         .velocity-info-name {
             min-width: 72px;
             font-weight: 700;
+        }
+
+        .velocity-chart-wrap {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .velocity-chart {
+            width: 100%;
+            height: 64px;
+            border: 1px solid #e2e8f0;
+            border-radius: 4px;
+            background: #ffffff;
+        }
+
+        .velocity-zero-line {
+            stroke: #cbd5e1;
+            stroke-width: 1;
+            stroke-dasharray: 3 3;
+        }
+
+        .velocity-line-vx {
+            fill: none;
+            stroke: #0ea5e9;
+            stroke-width: 2;
+            stroke-linejoin: round;
+            stroke-linecap: round;
+        }
+
+        .velocity-line-vy {
+            fill: none;
+            stroke: #22c55e;
+            stroke-width: 2;
+            stroke-linejoin: round;
+            stroke-linecap: round;
+        }
+
+        .velocity-line-wz {
+            fill: none;
+            stroke: #ef4444;
+            stroke-width: 2;
+            stroke-linejoin: round;
+            stroke-linecap: round;
+        }
+
+        .velocity-chart-legend {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 11px;
+            color: #475569;
+        }
+
+        .legend-dot {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 4px;
+            vertical-align: middle;
+        }
+
+        .legend-dot.vx {
+            background: #0ea5e9;
+        }
+
+        .legend-dot.vy {
+            background: #22c55e;
+        }
+
+        .legend-dot.wz {
+            background: #ef4444;
+        }
+
+        .legend-scale {
+            margin-left: auto;
+            color: #64748b;
+        }
+
+        .velocity-chart-empty {
+            font-size: 11px;
+            color: #94a3b8;
+            border: 1px dashed #cbd5e1;
+            border-radius: 4px;
+            padding: 6px 8px;
+            background: #ffffff;
         }
 
         .keyboard-control summary {
