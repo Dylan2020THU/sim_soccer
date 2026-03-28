@@ -250,6 +250,35 @@ def _load_referee_area_config_from_match_config(match_config_path: Path | None) 
     return cfg
 
 
+def _load_team_meta_from_match_config(match_config_path: Path | None) -> dict[str, dict[str, object]]:
+    default = {
+        "red": {"team_number": 12, "team_name": "Home"},
+        "blue": {"team_number": 32, "team_name": "Away"},
+    }
+    if match_config_path is None or not match_config_path.exists():
+        return default
+    try:
+        data = json.loads(match_config_path.read_text(encoding="utf-8"))
+        teams = data.get("teams", {}) if isinstance(data, dict) else {}
+        if not isinstance(teams, dict):
+            return default
+        for side in ("red", "blue"):
+            tcfg = teams.get(side, {})
+            if not isinstance(tcfg, dict):
+                continue
+            if "team_number" in tcfg:
+                default[side]["team_number"] = int(tcfg["team_number"])
+            elif "team_id" in tcfg:
+                default[side]["team_number"] = int(tcfg["team_id"])
+            if "team_name" in tcfg:
+                default[side]["team_name"] = str(tcfg["team_name"])
+            elif "name" in tcfg:
+                default[side]["team_name"] = str(tcfg["name"])
+    except Exception:
+        pass
+    return default
+
+
 def _write_temp_xml(xml_text: str) -> Path:
     fd = tempfile.NamedTemporaryFile(prefix="multi_k1_scene_", suffix=".xml", delete=False)
     fd.write(xml_text.encode("utf-8"))
@@ -966,6 +995,7 @@ class MultiRobotMujocoSim:
         self._world_length = float(self._field_length + 4.0 * margin_x)
         self._world_width = float(self._field_width + 4.0 * margin_y)
         referee_area_cfg = _load_referee_area_config_from_match_config(args.match_config)
+        team_meta_cfg = _load_team_meta_from_match_config(args.match_config)
         scene_xml, _ = _build_multi_robot_soccer_scene_xml(
             args.robot_xml,
             args.soccer_world_xml,
@@ -1049,6 +1079,10 @@ class MultiRobotMujocoSim:
                 goalie_area_extra_width=goalie_area_extra_width,
                 red_count=self.max_red_robots,
                 blue_count=self.max_blue_robots,
+                left_team_number=int(team_meta_cfg["red"]["team_number"]),
+                right_team_number=int(team_meta_cfg["blue"]["team_number"]),
+                left_team_name=str(team_meta_cfg["red"]["team_name"]),
+                right_team_name=str(team_meta_cfg["blue"]["team_name"]),
             )
             print("[MultiRobotMujocoSim] referee: enabled")
         else:
@@ -2033,6 +2067,10 @@ class MultiRobotMujocoSim:
                 if got_msg and msg is not None:
                     client_ts = msg.get("timestamp", 0)
                     msg_source = msg.get("source", "unknown")
+                    if self.referee is not None:
+                        gc_cmd = msg.get("game_controller_cmd")
+                        if isinstance(gc_cmd, (list, tuple)) and len(gc_cmd) == 5:
+                            self.referee.apply_auto_ref_command(gc_cmd)
                     if "commands" in msg and isinstance(msg["commands"], list):
                         for item in msg["commands"]:
                             if not isinstance(item, dict):

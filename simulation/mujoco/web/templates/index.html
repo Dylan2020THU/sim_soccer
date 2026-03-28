@@ -20,10 +20,11 @@
         <div id="referee-panel" class="referee-panel" style="display: none;">
             <div class="referee-title">Referee</div>
             <div class="referee-grid">
-                <div class="referee-row"><span>Mode</span><strong id="ref-play-mode">-</strong></div>
-                <div class="referee-row"><span>Time</span><strong id="ref-play-time">-</strong></div>
+                <div class="referee-row"><span>State</span><strong id="ref-state">-</strong></div>
+                <div class="referee-row"><span>Set Play</span><strong id="ref-set-play">-</strong></div>
+                <div class="referee-row"><span>Kicking</span><strong id="ref-kicking-team">-</strong></div>
+                <div class="referee-row"><span>Time Left</span><strong id="ref-time-left">-</strong></div>
                 <div class="referee-row"><span>Score</span><strong id="ref-score">-</strong></div>
-                <div class="referee-row"><span>Scoring</span><strong id="ref-score-allowed">-</strong></div>
             </div>
         </div>
     </div>
@@ -707,25 +708,59 @@
         let keyboardLastRobot = '';
         let keyboardRobotOptionsLocked = false;
 
-        function formatPlayMode(mode) {
+        function formatGameState(gs) {
+            const stateName = gs.state_name || gs.state || "-";
             const map = {
-                BeforeKickOff: "Before Kick-Off",
-                KickOff_Left: "Kick-Off Left",
-                KickOff_Right: "Kick-Off Right",
-                PlayOn: "Play On",
-                KickIn_Left: "Throw-In Left",
-                KickIn_Right: "Throw-In Right",
-                corner_kick_left: "Corner Kick Left",
-                corner_kick_right: "Corner Kick Right",
-                goal_kick_left: "Goal Kick Left",
-                goal_kick_right: "Goal Kick Right",
-                Goal_Left: "Goal Left",
-                Goal_Right: "Goal Right",
-                free_kick_left: "Free Kick Left",
-                free_kick_right: "Free Kick Right",
-                GameOver: "Game Over",
+                STATE_INITIAL: "Initial",
+                STATE_READY: "Ready",
+                STATE_SET: "Set",
+                STATE_PLAYING: "Playing",
+                STATE_FINISHED: "Finished",
+                STATE_STANDBY: "Standby",
             };
-            return map[mode] || mode || "-";
+            return map[stateName] || stateName || "-";
+        }
+
+        function formatSetPlay(gs) {
+            const sp = gs.set_play_name || gs.set_play || "SET_PLAY_NONE";
+            const map = {
+                SET_PLAY_NONE: "None",
+                SET_PLAY_KICK_OFF: "Kick-Off",
+                SET_PLAY_KICK_IN: "Kick-In",
+                SET_PLAY_GOAL_KICK: "Goal Kick",
+                SET_PLAY_CORNER_KICK: "Corner Kick",
+                SET_PLAY_DIRECT_FREE_KICK: "Direct Free Kick",
+                SET_PLAY_INDIRECT_FREE_KICK: "Indirect Free Kick",
+                SET_PLAY_PENALTY_KICK: "Penalty Kick",
+            };
+            return map[sp] || sp || "-";
+        }
+
+        function resolveScore(gs) {
+            if (Array.isArray(gs.teams) && gs.teams.length >= 2) {
+                const left = Number(gs.teams[0]?.score || 0);
+                const right = Number(gs.teams[1]?.score || 0);
+                return `${left} : ${right}`;
+            }
+            const left = Number(gs.score_left || 0);
+            const right = Number(gs.score_right || 0);
+            return `${left} : ${right}`;
+        }
+
+        function resolveKickingTeam(gs) {
+            const kt = Number(gs.kicking_team);
+            if (Array.isArray(gs.teams) && gs.teams.length > 0 && Number.isFinite(kt)) {
+                for (const t of gs.teams) {
+                    if (Number(t.team_number) === kt) {
+                        const name = t.team_name || `#${kt}`;
+                        return `${name} (#${kt})`;
+                    }
+                }
+            }
+            if (gs.kicking_side) {
+                return String(gs.kicking_side);
+            }
+            return Number.isFinite(kt) ? `#${kt}` : "-";
         }
 
         function formatPlayTime(sec) {
@@ -747,16 +782,15 @@
             }
             panel.style.display = 'block';
             if (restartBtn) restartBtn.style.display = 'inline-block';
-            document.getElementById('ref-play-mode').textContent = formatPlayMode(latestGameState.play_mode);
-            document.getElementById('ref-play-time').textContent = formatPlayTime(Number(latestGameState.play_time));
-            const left = Number(latestGameState.score_left || 0);
-            const right = Number(latestGameState.score_right || 0);
-            document.getElementById('ref-score').textContent = `${left} : ${right}`;
-            const allowed = (latestGameState.scoring_allowed || 'both').toLowerCase();
-            const allowedText = allowed === 'left' ? 'Left (Red)'
-                : allowed === 'right' ? 'Right (Blue)'
-                : 'Both';
-            document.getElementById('ref-score-allowed').textContent = allowedText;
+            document.getElementById('ref-state').textContent = formatGameState(latestGameState);
+            document.getElementById('ref-set-play').textContent = formatSetPlay(latestGameState);
+            document.getElementById('ref-kicking-team').textContent = resolveKickingTeam(latestGameState);
+            if (latestGameState.secs_remaining !== undefined && latestGameState.secs_remaining !== null) {
+                document.getElementById('ref-time-left').textContent = formatPlayTime(Number(latestGameState.secs_remaining));
+            } else {
+                document.getElementById('ref-time-left').textContent = formatPlayTime(Number(latestGameState.play_time));
+            }
+            document.getElementById('ref-score').textContent = resolveScore(latestGameState);
         }
 
         function inferTeamByName(name) {
