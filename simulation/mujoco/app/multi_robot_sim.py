@@ -279,6 +279,38 @@ def _load_team_meta_from_match_config(match_config_path: Path | None) -> dict[st
     return default
 
 
+def _load_spawn_positions_from_match_config(
+    match_config_path: Path | None,
+) -> dict[str, list[tuple[float, float, float]]]:
+    out: dict[str, list[tuple[float, float, float]]] = {"red": [], "blue": []}
+    if match_config_path is None or not match_config_path.exists():
+        return out
+    try:
+        data = json.loads(match_config_path.read_text(encoding="utf-8"))
+        teams = data.get("teams", {}) if isinstance(data, dict) else {}
+        if not isinstance(teams, dict):
+            return out
+        for side in ("red", "blue"):
+            tcfg = teams.get(side, {})
+            if not isinstance(tcfg, dict):
+                continue
+            raw = tcfg.get("spawn_positions", [])
+            if not isinstance(raw, list):
+                continue
+            parsed: list[tuple[float, float, float]] = []
+            for p in raw:
+                if not isinstance(p, (list, tuple)) or len(p) < 2:
+                    continue
+                x = float(p[0])
+                y = float(p[1])
+                theta = float(p[2]) if len(p) >= 3 and p[2] is not None else 0.0
+                parsed.append((x, y, theta))
+            out[side] = parsed
+    except Exception:
+        pass
+    return out
+
+
 def _write_temp_xml(xml_text: str) -> Path:
     fd = tempfile.NamedTemporaryFile(prefix="multi_k1_scene_", suffix=".xml", delete=False)
     fd.write(xml_text.encode("utf-8"))
@@ -728,6 +760,7 @@ def _build_multi_robot_soccer_scene_xml(
     goal_cfg: dict[str, float] | None = None,
     outer_floor_cfg: dict[str, object] | None = None,
     field_markings_cfg: dict[str, object] | None = None,
+    spawn_positions_cfg: dict[str, list[tuple[float, float, float]]] | None = None,
     keep_robot_sensors: bool = False,
 ) -> tuple[Path, list[int]]:
     meshdir = robot_xml.parent / "meshes"
@@ -772,12 +805,27 @@ def _build_multi_robot_soccer_scene_xml(
 
     def add_team(team: str, count: int):
         base_id = 0 if team == "red" else MAX_ROBOTS_PER_TEAM
+        team_spawns = []
+        if isinstance(spawn_positions_cfg, dict):
+            team_spawns = spawn_positions_cfg.get(team, []) or []
+        selected_spawns: list[tuple[float, float, float]] = []
+        if team_spawns:
+            n = len(team_spawns)
+            m = int(count)
+            if m <= n:
+                start = max(0, (n - m) // 2)
+                selected_spawns = team_spawns[start : start + m]
+            else:
+                selected_spawns = list(team_spawns)
         for i in range(count):
             rid = base_id + i
             robot_name = FIXED_ROBOT_ID_TO_NAME[rid]
             body_copy = deepcopy(template_body)
             _prefix_body_tree_names(body_copy, robot_name)
-            x, y, theta = _spawn_xy_theta(team, i, count, target_field_size)
+            if selected_spawns and i < len(selected_spawns):
+                x, y, theta = selected_spawns[i]
+            else:
+                x, y, theta = _spawn_xy_theta(team, i, count, target_field_size)
             body_copy.set("pos", f"{x:.6f} {y:.6f} {template_spawn_z:.6f}")
             body_copy.set("quat", " ".join(f"{v:.9g}" for v in _quat_from_yaw(theta)))
             worldbody.append(body_copy)
@@ -996,6 +1044,7 @@ class MultiRobotMujocoSim:
         self._world_width = float(self._field_width + 4.0 * margin_y)
         referee_area_cfg = _load_referee_area_config_from_match_config(args.match_config)
         team_meta_cfg = _load_team_meta_from_match_config(args.match_config)
+        spawn_positions_cfg = _load_spawn_positions_from_match_config(args.match_config)
         scene_xml, _ = _build_multi_robot_soccer_scene_xml(
             args.robot_xml,
             args.soccer_world_xml,
@@ -1007,6 +1056,7 @@ class MultiRobotMujocoSim:
             goal_cfg=goal_cfg,
             outer_floor_cfg=outer_floor_cfg,
             field_markings_cfg=field_markings_cfg,
+            spawn_positions_cfg=spawn_positions_cfg,
             keep_robot_sensors=(self.robot_cfg.robot_type == PI_PLUS_ROBOT_TYPE),
         )
 
@@ -1591,10 +1641,18 @@ class MultiRobotMujocoSim:
             n2 = mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_GEOM, g2) or ""
             if n1 != "ball" and n2 != "ball":
                 continue
+            other_gid = g2 if n1 == "ball" else g1
             other = n2 if n1 == "ball" else n1
-            if "__" not in other:
+            # Many collision geoms do not have a prefixed geom name.
+            # Fallback to owning body name, which is always prefixed.
+            if "__" in other:
+                owner_name = other
+            else:
+                body_id = int(self.model.geom_bodyid[other_gid])
+                owner_name = mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_BODY, body_id) or ""
+            if "__" not in owner_name:
                 continue
-            robot_name = other.split("__", 1)[0]
+            robot_name = owner_name.split("__", 1)[0]
             rid = FIXED_ROBOT_NAME_TO_ID.get(robot_name)
             if rid is not None and rid in self.robot_specs:
                 active.add(rid)
