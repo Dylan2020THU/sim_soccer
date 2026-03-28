@@ -69,6 +69,12 @@ class AdvancedDribbler:
         # Anti-Oscillation
         self.spread_factor_max = 20.0 # degrees
         self.spread_factor_min = 5.0 # degrees
+
+        # Hysteresis to avoid mode chattering near b_x threshold
+        self.turn_to_ball_enter_bx = 0.03
+        self.turn_to_ball_exit_bx = 0.08
+        self.turn_to_ball_mode = False
+        self.direction_consistency_bx = 0.12  # keep turn direction consistent near mode boundary
         
     def get_target_vector(self):
         """
@@ -145,8 +151,22 @@ class AdvancedDribbler:
         ball_dist = math.hypot(b_x, b_y)
         ball_angle_to_robot = math.atan2(b_y, b_x)  # Angle from robot forward to ball
         ball_angle_deg = math.degrees(ball_angle_to_robot)
+        self.logger.info(
+            f"[AdvDribble] ball_angle_to_robot={ball_angle_to_robot:.4f}rad ({ball_angle_deg:.1f}deg), b=({b_x:.3f}, {b_y:.3f})"
+        )
         
-        if b_x < 0.05:  # Ball is behind or barely in front
+        prev_turn_to_ball_mode = self.turn_to_ball_mode
+        if self.turn_to_ball_mode:
+            self.turn_to_ball_mode = b_x < self.turn_to_ball_exit_bx
+        else:
+            self.turn_to_ball_mode = b_x < self.turn_to_ball_enter_bx
+
+        if self.turn_to_ball_mode != prev_turn_to_ball_mode:
+            self.logger.info(
+                f"[AdvDribble] MODE_SWITCH turn_to_ball={self.turn_to_ball_mode} b_x={b_x:.3f} (enter<{self.turn_to_ball_enter_bx:.2f}, exit<{self.turn_to_ball_exit_bx:.2f})"
+            )
+
+        if self.turn_to_ball_mode:  # Ball behind mode (with hysteresis)
             # Turn towards the ball instead of dribbling
             turn_speed = 1.5 * ball_angle_to_robot  # P-control to face ball
             turn_speed = max(min(turn_speed, 1.5), -1.5)  # Clamp
@@ -206,7 +226,7 @@ class AdvancedDribbler:
         
         # A. Turn (da)
         # Minimize angle to target
-        da = self.bturn_p * target_angle_local
+        da = -self.bturn_p * target_angle_local  # invert sign to align with TURN_TO_BALL rotation direction
         
         # [NEW] Dampen Turn when very close to ball to prevent oscillation ("Large angle change" issue)
         # If b_x is small (e.g. 0.1), simple turning changes relative geometry fast.
@@ -319,6 +339,11 @@ class AdvancedDribbler:
             
         # [NEW] Clamp Angular Velocity
         da = max(min(da, 1.5), -1.5)
+
+        # Keep angular direction consistent with TURN_TO_BALL near threshold
+        # to avoid opposite commands around mode boundary.
+        if b_x < self.direction_consistency_bx and abs(ball_angle_to_robot) > 0.2 and abs(da) > 1e-6:
+            da = math.copysign(abs(da), ball_angle_to_robot)
         
         # LOGGING
         log_data = {

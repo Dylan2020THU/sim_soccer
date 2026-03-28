@@ -402,7 +402,7 @@ def parse_runtime_args(mujoco_dir: Path) -> RuntimeArgs:
     parser.add_argument(
         "--real-time",
         action=argparse.BooleanOptionalAction,
-        default=False,
+        default=True,
         help="Run simulation in real-time pace. Default false: run as fast as possible.",
     )
     parser.add_argument(

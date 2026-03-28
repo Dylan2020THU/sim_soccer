@@ -26,6 +26,7 @@ initial_pos:
   theta: 0
 
 league: "M" # "S", "M", "L"
+sim_hz: 50.0  # simulation control frequency, <=0 means unlimited
 
 # ball
 close_to_ball_threshold: 0.5

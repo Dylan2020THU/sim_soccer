@@ -241,7 +241,7 @@ class SimAgent:
         def error(self, msg): self._logger.error(msg)
         def fatal(self, msg): self._logger.critical(msg)
     
-    def __init__(self, args=None, ip="127.0.0.1", port="5555"):
+    def __init__(self, args=None, ip="127.0.0.1", port="5555", sim_hz=None):
         # Setup logging (std out and file)
         log_fmt = logging.Formatter('%(asctime)s [%(levelname)s] %(name)s: %(message)s')
         
@@ -268,6 +268,8 @@ class SimAgent:
         self._config = configuration.load_config()
         self.id = self._config.get("id", 0)
         self.league = self._config.get("league", "S") # Fix: Explicitly set league (Default S)
+        # Simulation control frequency (Hz). <= 0 means unlimited lockstep speed.
+        self.sim_hz = self._config.get("sim_hz", 50.0) if sim_hz is None else sim_hz
         
         # Override with command line arg if provided
         if args:
@@ -279,6 +281,9 @@ class SimAgent:
             self.color = self._config.get("color", "red")
             if hasattr(args, "color") and args.color is not None:
                  self.color = args.color
+
+            if hasattr(args, "sim_hz") and args.sim_hz is not None:
+                self.sim_hz = args.sim_hz
 
             # Configure team offset based on resolved color
             if self.color:
@@ -315,6 +320,17 @@ class SimAgent:
                          
                 except Exception as e:
                     self.logger.warning(f"[SimCore] Failed to load match config for team offset: {e}. Using raw ID.")
+
+        try:
+            self.sim_hz = float(self.sim_hz)
+        except (TypeError, ValueError):
+            self.logger.warning(f"[SimCore] Invalid sim_hz={self.sim_hz}, fallback to 50.0")
+            self.sim_hz = 50.0
+
+        if self.sim_hz > 0:
+            self.logger.info(f"[SimCore] Control frequency limited to {self.sim_hz:.2f} Hz")
+        else:
+            self.logger.info("[SimCore] Control frequency unlimited (lockstep max speed)")
 
         self.logger.info(f"[SimCore] Final Robot ID: {self.id}")
         
@@ -354,8 +370,10 @@ class SimAgent:
 
     def run(self):
         self.logger.info("[SimCore] Starting Loop...")
+        tick_period = (1.0 / self.sim_hz) if self.sim_hz > 0 else None
         while True:
             try:
+                loop_start = time.perf_counter()
                 # 1. User Loop (Think)
                 user_entry.loop(self)
                 
@@ -372,9 +390,11 @@ class SimAgent:
                     self.gamecontroller.update(state.get("gamecontroller", {}))
                     self.communication.update(state.get("communication", {}))
                 
-                # Optional: Sleep to limit rate if sim is too fast? 
-                # ZMQ is lockstep, so speed is determined by Sim + Network + Think time.
-                # No sleep needed for max speed.
+                if tick_period is not None:
+                    elapsed = time.perf_counter() - loop_start
+                    sleep_time = tick_period - elapsed
+                    if sleep_time > 0:
+                        time.sleep(sleep_time)
                 
             except KeyboardInterrupt:
                 break
@@ -496,6 +516,7 @@ if __name__ == "__main__":
     parser.add_argument("--port", default="5555", help="Sim Port")
     parser.add_argument("--id", type=int, default=None, help="Robot ID (overrides config)")
     parser.add_argument("--color", type=str, default=None, choices=["red", "blue"], help="Team color (red/blue). If set, --id is interpreted as player number within team.")
+    parser.add_argument("--sim-hz", dest="sim_hz", type=float, default=None, help="Simulation control frequency in Hz (<=0 for unlimited)")
     
     # We need to handle known vs unknown args because ROS args might be present if users mistake
     # But since we control the call:
@@ -504,7 +525,7 @@ if __name__ == "__main__":
     if args.simulation:
         # Simulation Mode (ROS-free)
         import logging
-        agent = SimAgent(args, ip=args.ip, port=args.port)
+        agent = SimAgent(args, ip=args.ip, port=args.port, sim_hz=args.sim_hz)
         agent.run()
     else:
         # ROS Mode - check if ROS2 is available
